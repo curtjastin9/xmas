@@ -33,7 +33,7 @@ const isLead = r => (r && (r.member_role || r.role)) === 'leader' ? 1 : 0;
 /** stable sort: leaders always first, everything else keeps its order */
 const leadersFirst = list => list.map((x, i) => [x, i]).sort((a, b) => (isLead(b[0]) - isLead(a[0])) || (a[1] - b[1])).map(x => x[0]);
 
-let ME = null, COMMITTEES = [], LOCATIONS = [];
+let ME = null, COMMITTEES = [], LOCATIONS = [], LOCATION_RULES = {}; // LOCATION_RULES: committee id -> allowed places (null = any)
 const isSec = () => ME && ME.role === 'secretariat';
 const comColor = id => (COMMITTEES.find(c => +c.id === +id) || {}).color || '#64748b';
 const comByName = n => COMMITTEES.find(c => c.name === n);
@@ -290,7 +290,8 @@ function eventModal(e, done) {
         <label>Start time<input name="event_time" type="time" value="${esc((e.event_time || '').slice(0, 5))}"></label>
         <label>End time<input name="end_time" type="time" value="${esc((e.end_time || '').slice(0, 5))}"></label>
       </div>
-      <label>Location<select name="location"><option value="">No location</option>${locs.map(n => `<option ${n === e.location ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
+      <label>Location<select name="location" id="locsel"></select></label>
+      <div class="sub" id="lochint" style="margin-top:6px"></div>
       ${isSec() ? `<label>For<select name="scope" id="scope"><option value="all">Everyone – all committees &amp; leaders</option>
         ${COMMITTEES.map(c => `<option value="${c.id}" ${cur.length === 1 && cur[0] === +c.id ? 'selected' : ''}>${esc(c.name)} only</option>`).join('')}
         ${mergeable.length > 1 ? `<option value="merge" ${cur.length > 1 ? 'selected' : ''}>Merged practice – choose committees…</option>` : ''}</select></label>
@@ -315,6 +316,25 @@ function eventModal(e, done) {
         $('#sv', el).textContent = !editing && list.length > 1 ? `Save ${list.length} schedules` : 'Save';
       };
       draw();
+      /* location rules: some committees have a fixed place, some choose between two (rules come from the server) */
+      const curIds = () => !isSec() ? [+ME.committee_id] : ($('#scope', el).value === 'all' ? [] : $('#scope', el).value === 'merge' ? $$('input[name=mc]:checked', el).map(x => +x.value) : [+$('#scope', el).value]);
+      const allowedFor = ids => {
+        const lists = ids.map(i => LOCATION_RULES[i]).filter(l => l && l.length);
+        if (!lists.length) return null;
+        let r = lists[0]; lists.slice(1).forEach(l => { r = r.filter(x => l.includes(x)); });
+        if (!r.length && isSec()) r = [...new Set(lists.flat())];
+        return r;
+      };
+      const fillLocs = () => {
+        const sel = $('#locsel', el), al = allowedFor(curIds());
+        const want = sel.options.length ? sel.value : (e.location || '');
+        const names = al === null ? locs : al, fixed = !!al && al.length === 1;
+        sel.innerHTML = (fixed ? '' : '<option value="">No location</option>') + names.map(n => `<option>${esc(n)}</option>`).join('');
+        sel.value = names.includes(want) ? want : (fixed ? al[0] : '');
+        $('#lochint', el).textContent = !al ? '' : fixed ? 'Fixed location for this committee: ' + al[0] + '.' : al.length ? 'This committee can practise at: ' + al.join(' or ') + '.' : 'These committees have no common location. Schedule them separately.';
+      };
+      fillLocs();
+      if (isSec()) $('#mergebox', el).addEventListener('change', fillLocs);
       const step = k => { vm += k; if (vm < 0) { vm = 11; vy--; } if (vm > 11) { vm = 0; vy++; } draw(); };
       $('#pm', el).onclick = () => step(-1);
       $('#nm', el).onclick = () => step(1);
@@ -325,7 +345,7 @@ function eventModal(e, done) {
         draw();
       };
       $('#picked', el).onclick = ev => { const p = ev.target.closest('[data-rm]'); if (p && !editing) { sel.delete(p.dataset.rm); draw(); } };
-      if (isSec()) $('#scope', el).onchange = () => $('#mergebox', el).classList.toggle('hidden', $('#scope', el).value !== 'merge');
+      if (isSec()) $('#scope', el).onchange = () => { $('#mergebox', el).classList.toggle('hidden', $('#scope', el).value !== 'merge'); fillLocs(); };
       $('#ef', el).addEventListener('submit', async ev => {
         ev.preventDefault();
         if (!sel.size) { toast('Tap at least one date on the calendar.', true); return; }
@@ -1061,7 +1081,7 @@ VIEWS.settings = async () => {
   try { cached = JSON.parse(sessionStorage.getItem('me')); } catch (e) {}
   if (!cached || !cached.user) cached = null;
   const apply = d => {
-    ME = d.user; COMMITTEES = d.committees; LOCATIONS = d.locations || [];
+    ME = d.user; COMMITTEES = d.committees; LOCATIONS = d.locations || []; LOCATION_RULES = d.location_rules || {};
     const st = d.settings || {};
     SEASON_START = st.season_start || ''; SEASON_END = st.season_end || '';
     $('#whoName').textContent = ME.full_name;

@@ -47,6 +47,30 @@ function locations() {
     try { return q('SELECT id, name FROM locations ORDER BY sort_order, id')->fetchAll(); }
     catch (Throwable $e) { error_log('locations: ' . $e->getMessage()); return []; }
 }
+/** Where each committee may practise (matched by committee name). A list = only those places; null = any location. */
+function locationRules() {
+    $two = ['Solidarity Hall', 'Inside Church'];
+    $byName = [
+        'props' => ['Solidarity Hallway'],          // fixed
+        'scriptwriter' => ['Coy Room'],             // fixed
+        'scriptwriters' => ['Coy Room'],            // fixed
+        'canvas' => $two, 'lights' => $two, 'finaldance' => $two, 'characters' => $two, // may choose
+    ];
+    $rules = [];
+    try { foreach (q('SELECT id, name FROM committees')->fetchAll() as $c) $rules[(int)$c['id']] = $byName[norm($c['name'])] ?? null; }
+    catch (Throwable $e) { error_log('locationRules: ' . $e->getMessage()); }
+    return $rules;
+}
+/** Places allowed for a set of committees (a merged practice needs a place every restricted committee allows). null = any. */
+function allowedLocations($cids, $rules, $isSecretariat) {
+    $lists = [];
+    foreach ($cids as $c) if (!empty($rules[(int)$c])) $lists[] = $rules[(int)$c];
+    if (!$lists) return null;
+    $r = $lists[0];
+    foreach (array_slice($lists, 1) as $l) $r = array_values(array_intersect($r, $l));
+    if (!$r && $isSecretariat) { $r = []; foreach ($lists as $l) $r = array_merge($r, $l); $r = array_values(array_unique($r)); } // no common place: Secretariat may pick any of them
+    return $r;
+}
 /** All committees; `can_merge` marks the ones that can share a merged practice. */
 function committees() {
     try { return q('SELECT id, name, color, can_merge FROM committees ORDER BY sort_order')->fetchAll(); }
@@ -54,7 +78,7 @@ function committees() {
 }
 function meData($u) {
     $u['committee_name'] = $u['committee_id'] ? q('SELECT name FROM committees WHERE id = ?', [$u['committee_id']])->fetchColumn() : null;
-    return ['user' => $u, 'committees' => committees(), 'settings' => settings(), 'locations' => locations()];
+    return ['user' => $u, 'committees' => committees(), 'settings' => settings(), 'locations' => locations(), 'location_rules' => locationRules()];
 }
 function isSec($u) { return $u['role'] === 'secretariat'; }
 function needSec() { $u = need(); if (!isSec($u)) out(false, 'Only the Secretariat can do this.'); return $u; }
@@ -159,7 +183,7 @@ function syncLeaders() {
 function ensureSchema($force = false) {
     global $pdo;
     $errs = [];
-    $flag = sys_get_temp_dir() . '/mq_schema_v2';
+    $flag = sys_get_temp_dir() . '/mq_schema_v3';
     if (!$force && is_file($flag)) return $errs;
     $hasTable = fn($t) => (bool)q('SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', [$t])->fetchColumn();
     $hasCol = fn($t, $c) => (bool)q('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?', [$t, $c])->fetchColumn();
@@ -170,6 +194,16 @@ function ensureSchema($force = false) {
     $run("CREATE TABLE IF NOT EXISTS locations (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100) NOT NULL, sort_order INT NOT NULL DEFAULT 0)");
     $run("CREATE TABLE IF NOT EXISTS settings (k VARCHAR(50) NOT NULL PRIMARY KEY, v VARCHAR(255) NOT NULL)");
     $run("CREATE TABLE IF NOT EXISTS rate_limits (id INT AUTO_INCREMENT PRIMARY KEY, rkey VARCHAR(150) NOT NULL, hit_at INT NOT NULL, KEY k1 (rkey, hit_at))");
+
+    // one-time: make sure the practice places exist (removing one later in Settings sticks)
+    try {
+        if (!q("SELECT 1 FROM settings WHERE k = 'loc_seed_v1'")->fetchColumn()) {
+            foreach (['Solidarity Hallway', 'Solidarity Hall', 'Inside Church', 'Coy Room'] as $ln)
+                if (!q('SELECT 1 FROM locations WHERE name = ?', [$ln])->fetchColumn())
+                    q('INSERT INTO locations (name, sort_order) SELECT ?, COALESCE(MAX(sort_order), 0) + 1 FROM locations', [$ln]);
+            q("INSERT INTO settings (k, v) VALUES ('loc_seed_v1', '1') ON DUPLICATE KEY UPDATE v = v");
+        }
+    } catch (Throwable $e) { error_log('seed locations: ' . $e->getMessage()); $errs[] = 'seed locations => ' . $e->getMessage(); }
 
     // old single-committee column -> new link table
     if ($hasCol('events', 'committee_id')) {
@@ -310,6 +344,14 @@ switch ($action) {
             $kind = $cids ? 'custom' : 'fixed';
         } else {
             $cids = [scope($u)]; $kind = 'custom';
+        }
+        // committee location rules (Props / Script Writers fixed; Canvas, Lights, Final Dance, Characters choose between two places)
+        $allowed = allowedLocations($cids, locationRules(), isSec($u));
+        if ($allowed !== null) {
+            $oldLoc = $id ? (string)q('SELECT location FROM events WHERE id = ?', [$id])->fetchColumn() : '';
+            if (!$allowed) out(false, 'These committees have no common location. Schedule them separately.');
+            if ($loc === '' && count($allowed) === 1) $loc = $allowed[0];
+            elseif ($loc !== '' && !in_array($loc, $allowed, true) && !($id && $loc === $oldLoc)) out(false, 'For this committee the location can only be: ' . implode(' or ', $allowed) . '.');
         }
         $link = function ($eid) use ($cids) { foreach ($cids as $c) q('INSERT INTO event_committees (event_id, committee_id) VALUES (?,?)', [$eid, $c]); };
         if ($id) {

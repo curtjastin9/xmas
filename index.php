@@ -12,7 +12,7 @@ if (empty($_SESSION['uid'])) { header('Location: login.php'); exit; }
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="MQAP Attendance">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="style.css?v=12">
+<link rel="stylesheet" href="style.css?v=13">
 <link rel="stylesheet" href="mobile.css?v=1">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" media="print" onload="this.media='all'"><noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"></noscript>
 </head><body>
@@ -28,5 +28,5 @@ if (empty($_SESSION['uid'])) { header('Location: login.php'); exit; }
   <div id="view"></div>
 </main>
 <div id="toasts" role="status" aria-live="polite"></div>
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 </body></html>

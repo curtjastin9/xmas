@@ -55,11 +55,15 @@ function cookie_opts($exp) {
     $https = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') || (($_SERVER['HTTP_X_FORWARDED_PROTO'] ?? '') === 'https');
     return ['expires' => $exp, 'path' => '/', 'secure' => $https, 'httponly' => true, 'samesite' => 'Lax'];
 }
-function set_login($uid) {
+/** Fingerprint of the user's password hash: changing the password signs every other device out. */
+function pw_fp($pwHash) { return substr(hash_hmac('sha256', (string)$pwHash, auth_key()), 0, 16); }
+function set_login($uid, $pwHash) {
     $exp = time() + 86400 * 7;
-    $p = b64u_enc((int)$uid . '.' . $exp);
+    $fp = pw_fp($pwHash);
+    $p = b64u_enc((int)$uid . '.' . $exp . '.' . $fp);
     setcookie('mq_auth', $p . '.' . hash_hmac('sha256', $p, auth_key()), cookie_opts($exp));
     $_SESSION['uid'] = (int)$uid;
+    $_SESSION['fp'] = $fp;
 }
 function clear_login() {
     setcookie('mq_auth', '', cookie_opts(time() - 3600));
@@ -72,6 +76,6 @@ if (is_string($mqc) && substr_count($mqc, '.') === 1) {
     [$mqp, $mqs] = explode('.', $mqc);
     if (hash_equals(hash_hmac('sha256', $mqp, auth_key()), $mqs)) {
         $mqd = explode('.', (string)b64u_dec($mqp));
-        if (count($mqd) === 2 && (int)$mqd[1] > time() && (int)$mqd[0] > 0) $_SESSION['uid'] = (int)$mqd[0];
+        if (count($mqd) === 3 && (int)$mqd[1] > time() && (int)$mqd[0] > 0) { $_SESSION['uid'] = (int)$mqd[0]; $_SESSION['fp'] = $mqd[2]; }
     }
 }

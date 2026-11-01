@@ -8,8 +8,11 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const norm = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 const TZ = 'Asia/Manila';
-const SEASON_START = '2026-11-01', SEASON_END = '2026-12-24'; // only Nov 1 – Dec 24, 2026 is shown
-const clampDay = d => d < SEASON_START ? SEASON_START : d > SEASON_END ? SEASON_END : d;
+let SEASON_START = '', SEASON_END = ''; // loaded from the database (settings table)
+const clampDay = d => (SEASON_START && d < SEASON_START) ? SEASON_START : (SEASON_END && d > SEASON_END) ? SEASON_END : d;
+const inSeason = d => (!SEASON_START || d >= SEASON_START) && (!SEASON_END || d <= SEASON_END);
+const monthIdx = d => +d.slice(0, 4) * 12 + (+d.slice(5, 7) - 1);
+const GROUP_COLOR = '#0F3D2E'; // calendar dot for whole-group schedules
 const todayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ });
 const nowHM = () => new Date().toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false });
 const fmtDate = d => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '';
@@ -57,7 +60,7 @@ async function api(action, body) {
     toast('Network error. Check your connection and try again.', true);
     return { success: false, message: 'Network error.' };
   }
-  if (r.code === 'auth') { location.href = 'login.php'; return r; }
+  if (r.code === 'auth') { location.href = 'login.php?out=1'; return r; }
   return r;
 }
 /** api() that toasts failures and returns data (or null). */
@@ -78,7 +81,8 @@ function modal(html, mount) {
   back.innerHTML = `<div class="box" role="dialog" aria-modal="true">${html}</div>`;
   document.body.appendChild(back);
   document.body.style.overflow = 'hidden'; // no background scroll behind the sheet on phones
-  const close = () => { back.remove(); document.removeEventListener('keydown', onKey); if (!$('.back')) document.body.style.overflow = ''; };
+  let closeCb = null;
+  const close = () => { back.remove(); document.removeEventListener('keydown', onKey); if (!$('.back')) document.body.style.overflow = ''; if (closeCb) closeCb(); };
   const onKey = e => { if (e.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
   back.addEventListener('mousedown', e => { if (e.target === back) close(); });
@@ -88,15 +92,16 @@ function modal(html, mount) {
   const first = $('input:not([type=hidden]),select,textarea', back);
   if (first && !touch) first.focus();
   if (mount) mount(back, close);
-  return { el: back, close };
+  return { el: back, close, onClose: fn => { closeCb = fn; } };
 }
 function ask(title, msg, okLabel = 'Yes, continue') {
   return new Promise(res => {
+    let decided = false;
+    const fin = v => { if (!decided) { decided = true; res(v); } };
     const m = modal(`<h3>${esc(title)}</h3><p>${esc(msg)}</p>
       <div class="actions"><button class="btn ghost" data-close>Cancel</button><button class="btn pri" id="ok">${esc(okLabel)}</button></div>`,
-      (el, close) => { $('#ok', el).addEventListener('click', () => { close(); res(true); }); });
-    m.el.addEventListener('click', e => { if (e.target === m.el || e.target.hasAttribute('data-close')) res(false); });
-    document.addEventListener('keydown', function f(e) { if (e.key === 'Escape') { res(false); document.removeEventListener('keydown', f); } });
+      (el, close) => { $('#ok', el).addEventListener('click', () => { fin(true); close(); }); });
+    m.onClose(() => fin(false));
   });
 }
 
@@ -171,7 +176,7 @@ async function pulse() {
   let r;
   try { r = await (await fetch('api.php?action=pulse', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json(); }
   catch (e) { return; } // offline: stay quiet, try again next tick
-  if (r.code === 'auth') { location.href = 'login.php'; return; }
+  if (r.code === 'auth') { location.href = 'login.php?out=1'; return; }
   if (!r.success || !r.data) return;
   const h = r.data.hash;
   if (lastPulse === null) { lastPulse = h; return; }
@@ -327,7 +332,7 @@ VIEWS.schedule = async () => {
     if (tab === 'past') list.reverse();
     curList = list;
     $('#sch').innerHTML = list.length ? `<div class="tw tc"><table><thead><tr>${isSec() ? '<th style="width:40px"></th>' : ''}<th>Date</th><th>Title</th><th>For</th><th>Added by</th><th>Marked</th><th></th></tr></thead><tbody>
-      ${list.map(e => `<tr>${isSec() ? `<td data-label="Select"><input type="checkbox" class="bk" data-id="${e.id}" ${sel.has(+e.id) ? 'checked' : ''} style="width:20px;height:20px" aria-label="Select schedule"></td>` : ''}<td data-label="Date"><span><b>${esc(fmtDate(e.event_date))}</b><br><small>${esc(timeRange(e))}${e.location ? ' · ' + esc(e.location) : ''}</small></span></td>
+      ${list.map(e => `<tr>${isSec() ? `<td data-label="Select"><input type="checkbox" class="bk ck" data-id="${e.id}" ${sel.has(+e.id) ? 'checked' : ''} aria-label="Select schedule"></td>` : ''}<td data-label="Date"><span><b>${esc(fmtDate(e.event_date))}</b><br><small>${esc(timeRange(e))}${e.location ? ' · ' + esc(e.location) : ''}</small></span></td>
         <td data-label="Title"><span>${esc(e.title)} ${e.event_date === today ? '<span class="pill today">Today</span>' : ''}</span></td>
         <td data-label="For">${evFor(e)}</td><td data-label="Added by">${esc(e.added_by || 'Secretariat')}</td><td data-label="Marked">${e.marked}/${e.total}</td>
         <td class="act" style="white-space:nowrap;text-align:right"><a class="btn sm" href="#/attendance/${e.id}"><i class="fas fa-clipboard-check"></i> Attendance</a>
@@ -341,7 +346,7 @@ VIEWS.schedule = async () => {
     [...sel].forEach(i => { if (!ids.has(i)) sel.delete(i); });
     const n = sel.size, all = curList.length && curList.every(e => sel.has(+e.id));
     $('#bulk').innerHTML = curList.length ? `<div class="bar" style="margin:0 0 12px">
-      <label style="display:flex;gap:8px;align-items:center;font-weight:600;cursor:pointer"><input type="checkbox" id="selall" style="width:20px;height:20px;min-height:0;margin:0" ${all ? 'checked' : ''}> Select all (${curList.length})</label>
+      <label style="display:flex;gap:8px;align-items:center;font-weight:600;cursor:pointer"><input type="checkbox" id="selall" class="ck" ${all ? 'checked' : ''}> Select all (${curList.length})</label>
       ${n ? `<button class="btn sm no" id="bdel"><i class="fas fa-trash"></i> Delete selected (${n})</button><button class="btn sm ghost" id="bclr">Clear</button>` : ''}</div>` : '';
   };
   const bulkDelete = () => {
@@ -401,16 +406,16 @@ async function pickEvent(live) {
   let all;
   if (live) { const r = await api('events_list'); if (!r.success || tok !== routeTok) return false; all = r.data; }
   else { all = await call('events_list'); if (!all) return; }
-  const rows = all.filter(e => e.event_date >= SEASON_START && e.event_date <= SEASON_END);
+  const rows = all.filter(e => inSeason(e.event_date));
   const today = todayStr(), pad = n => String(n).padStart(2, '0');
   const byDate = {};
   rows.forEach(e => (byDate[e.event_date] = byDate[e.event_date] || []).push(e));
-  let sel = pickUI.sel || clampDay(today); // opens on the current month (kept inside Nov 1 – Dec 24, 2026)
+  let sel = pickUI.sel || clampDay(today); // opens on the current month (kept inside the season set in Settings)
   const b0 = new Date(sel + 'T00:00:00');
   let vy = pickUI.vy ?? b0.getFullYear(), vm = pickUI.vm ?? b0.getMonth(), tab = pickUI.tab || 'upcoming';
 
   const sub = e => [timeRange(e), e.location].filter(Boolean).map(esc).join(' · ') || '<span class="muted">No time set</span>';
-  const pct = e => e.total ? Math.round(e.marked / e.total * 100) : 0;
+  const pct = e => e.total ? Math.min(100, Math.round(e.marked / e.total * 100)) : 0;
   const meter = e => `<div class="meter"><i style="width:${pct(e)}%;background:${e.marked >= e.total && e.total ? 'var(--ok)' : 'var(--gold)'}"></i></div>`;
   const btn = e => `<a class="btn sm pri" href="#/attendance/${e.id}"><i class="fas fa-clipboard-check"></i> ${e.marked ? 'Review / edit' : 'Take attendance'}</a>`;
   const badge = d => { const x = new Date(d + 'T00:00:00'); return `<div class="dbadge"><small>${x.toLocaleDateString('en-PH', { month: 'short' })}</small><b>${x.getDate()}</b></div>`; };
@@ -467,15 +472,15 @@ async function pickEvent(live) {
     $('#ct').textContent = first.toLocaleDateString('en-PH', { month: 'long', year: 'numeric' });
     let h = '<span></span>'.repeat(first.getDay());
     for (let d = 1; d <= n; d++) {
-      const ds = `${vy}-${pad(vm + 1)}-${pad(d)}`, evs = byDate[ds] || [], off = ds < SEASON_START || ds > SEASON_END;
-      const dots = evs.slice(0, 4).map(e => `<i style="background:${esc(e.committee_id ? comColor(e.committee_id) : '#0F3D2E')}"></i>`).join('');
+      const ds = `${vy}-${pad(vm + 1)}-${pad(d)}`, evs = byDate[ds] || [], off = !inSeason(ds);
+      const dots = evs.slice(0, 4).map(e => `<i style="background:${esc(e.committee_id ? comColor(e.committee_id) : GROUP_COLOR)}"></i>`).join('');
       h += `<button type="button" class="day${ds === sel ? ' on' : ''}${ds === today ? ' now' : ''}${evs.length ? ' has' : ''}" data-d="${ds}"${off ? ' disabled aria-disabled="true"' : ''}>${d}<span class="dots">${dots}</span></button>`;
     }
     $('#days').innerHTML = h;
-    $('#pm').disabled = vy * 12 + vm <= 2026 * 12 + 10;
-    $('#nm').disabled = vy * 12 + vm >= 2026 * 12 + 11;
+    $('#pm').disabled = !!SEASON_START && vy * 12 + vm <= monthIdx(SEASON_START);
+    $('#nm').disabled = !!SEASON_END && vy * 12 + vm >= monthIdx(SEASON_END);
   };
-  const step = k => { const n = vy * 12 + vm + k; if (n < 2026 * 12 + 10 || n > 2026 * 12 + 11) return; vy = Math.floor(n / 12); vm = n % 12; drawCal(); };
+  const step = k => { const n = vy * 12 + vm + k; if ((SEASON_START && n < monthIdx(SEASON_START)) || (SEASON_END && n > monthIdx(SEASON_END))) return; vy = Math.floor(n / 12); vm = n % 12; drawCal(); };
   $$('#tabs .chip').forEach(c => c.classList.toggle('on', c.dataset.t === tab));
   drawLst(); drawCal(); drawDay();
   $('#tabs').onclick = e => { const b = e.target.closest('[data-t]'); if (!b) return; tab = b.dataset.t; $$('#tabs .chip').forEach(c => c.classList.toggle('on', c === b)); drawLst(); };
@@ -982,12 +987,20 @@ VIEWS.leaders = async () => {
 
 /* ================= SETTINGS ================= */
 VIEWS.settings = async () => {
-  view().innerHTML = `<div class="card" style="max-width:520px"><div class="head"><h3>Change password</h3></div>
+  view().innerHTML = `${isSec() ? `<div class="card" style="max-width:520px"><div class="head"><div><h3>Rehearsal season</h3><div class="sub">Only schedules between these dates show in Take attendance. Records are limited to them too.</div></div></div>
+    <form id="sf"><div class="two"><label>First day<input type="date" name="season_start" required value="${esc(SEASON_START)}"></label><label>Last day<input type="date" name="season_end" required value="${esc(SEASON_END)}"></label></div>
+    <div class="actions"><button class="btn pri">Save season</button></div></form></div>` : ''}
+    <div class="card" style="max-width:520px"><div class="head"><h3>Change password</h3></div>
     <form id="pf"><label>Current password<input name="current" type="password" autocomplete="current-password" required></label>
     <label>New password<input name="password" type="password" autocomplete="new-password" minlength="6" required></label>
     <label>Repeat new password<input name="again" type="password" autocomplete="new-password" minlength="6" required></label>
     <div class="actions"><button class="btn pri">Change password</button></div></form></div>
     <div class="card" style="max-width:520px"><b>${esc(ME.full_name)}</b><div class="sub">${esc(ME.username)} · ${isSec() ? 'Secretariat' : 'Leader of ' + esc(ME.committee_name || '—')}</div></div>`;
+  if (isSec()) $('#sf').onsubmit = async e => {
+    e.preventDefault();
+    const d = await busy($('.pri', e.target), () => call('settings_save', Object.fromEntries(new FormData(e.target)), true));
+    if (d && d !== true) { SEASON_START = d.season_start; SEASON_END = d.season_end; sessionStorage.removeItem('me'); }
+  };
   $('#pf').onsubmit = async e => {
     e.preventDefault();
     const b = Object.fromEntries(new FormData(e.target));
@@ -1000,8 +1013,11 @@ VIEWS.settings = async () => {
 (async function init() {
   let cached = null;
   try { cached = JSON.parse(sessionStorage.getItem('me')); } catch (e) {}
+  if (!cached || !cached.user) cached = null;
   const apply = d => {
     ME = d.user; COMMITTEES = d.committees;
+    const st = d.settings || {};
+    SEASON_START = st.season_start || ''; SEASON_END = st.season_end || '';
     $('#whoName').textContent = ME.full_name;
     $('#hchip').innerHTML = `<i class="av" style="font-style:normal">${esc(ME.full_name.trim().charAt(0).toUpperCase())}</i><span><b>${esc(ME.full_name)}</b><small>${isSec() ? 'Secretariat' : 'Leader · ' + esc(ME.committee_name || '—')}</small></span>`;
     $('#whoRole').textContent = isSec() ? 'Secretariat' : 'Leader · ' + (ME.committee_name || 'no committee');
@@ -1014,13 +1030,17 @@ VIEWS.settings = async () => {
     window.addEventListener('hashchange', route);
     route();
   };
-  const fresh = api('me');
+  const fresh = api('me');                    // asked in parallel with the first page when we already know who you are
   if (cached) { apply(cached); start(); }
   const r = await fresh;
-  if (!r.success) { sessionStorage.removeItem('me'); if (r.code !== 'auth') location.href = 'login.php'; return; }
+  if (!r.success) {
+    if (r.code === 'auth') { sessionStorage.removeItem('me'); return; } // api() already sent us to the login page
+    if (!cached) view().innerHTML = '<div class="empty">Could not load the app. <button class="btn sm" onclick="location.reload()">Try again</button></div>';
+    return;
+  }
   const changed = cached && JSON.stringify(cached) !== JSON.stringify(r.data);
-  sessionStorage.setItem('me', JSON.stringify(r.data));
+  try { sessionStorage.setItem('me', JSON.stringify(r.data)); } catch (e) {}
   if (!cached) { apply(r.data); start(); }
-  else if (changed) { apply(r.data); route(); } // committees/user changed on the server: refresh the list and redraw
+  else if (changed) { apply(r.data); route(); } // account, committees or season changed on the server: redraw
 })();
 })();

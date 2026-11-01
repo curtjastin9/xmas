@@ -1,5 +1,6 @@
 <?php
 require_once __DIR__ . '/session.php';
+if (isset($_GET['out'])) clear_login(); // the app sent us here because the session is no longer valid
 if (!empty($_SESSION['uid'])) { header('Location: index.php'); exit; }
 ?><!DOCTYPE html>
 <html lang="en"><head>

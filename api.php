@@ -21,15 +21,29 @@ function user() {
     if ($u !== false) return $u;
     $u = null;
     if (!empty($_SESSION['uid'])) {
-        $r = q('SELECT id, username, full_name, role, committee_id, status FROM users WHERE id = ?', [$_SESSION['uid']])->fetch();
-        if ($r && $r['status'] === 'active') $u = $r;
+        $r = q('SELECT id, username, full_name, role, committee_id, status, password FROM users WHERE id = ?', [$_SESSION['uid']])->fetch();
+        if ($r && $r['status'] === 'active' && hash_equals(pw_fp($r['password']), (string)($_SESSION['fp'] ?? ''))) { unset($r['password']); $u = $r; }
     }
     return $u;
 }
 function need() { $u = user(); if (!$u) out(false, 'Your session has expired. Please log in again.', null, 'auth'); return $u; }
+/** Run $fn inside a transaction (all or nothing). */
+function tx(callable $fn) {
+    global $pdo;
+    $pdo->beginTransaction();
+    try { $r = $fn(); $pdo->commit(); return $r; }
+    catch (Throwable $e) { if ($pdo->inTransaction()) $pdo->rollBack(); throw $e; }
+}
+/** App settings stored in the `settings` table (season dates). Falls back to defaults if a row is missing. */
+function settings() {
+    $s = ['season_start' => '2026-11-01', 'season_end' => '2026-12-24'];
+    try { foreach (q('SELECT k, v FROM settings')->fetchAll() as $r) if (array_key_exists($r['k'], $s)) $s[$r['k']] = $r['v']; }
+    catch (Throwable $e) { error_log('settings: ' . $e->getMessage()); }
+    return $s;
+}
 function meData($u) {
     $u['committee_name'] = $u['committee_id'] ? q('SELECT name FROM committees WHERE id = ?', [$u['committee_id']])->fetchColumn() : null;
-    return ['user' => $u, 'committees' => q('SELECT id, name, color FROM committees ORDER BY sort_order')->fetchAll()];
+    return ['user' => $u, 'committees' => q('SELECT id, name, color FROM committees ORDER BY sort_order')->fetchAll(), 'settings' => settings()];
 }
 function isSec($u) { return $u['role'] === 'secretariat'; }
 function needSec() { $u = need(); if (!isSec($u)) out(false, 'Only the Secretariat can do this.'); return $u; }
@@ -54,20 +68,17 @@ function roleOf($v) {
     return (strpos($s, 'lead') !== false || strpos($s, 'head') !== false) ? 'leader' : 'member';
 }
 function norm($s) { return strtolower(preg_replace('/[^a-z0-9]/i', '', (string)$s)); }
+/** Find a committee id from a typed name: exact match first, otherwise a single committee whose name contains (or is contained in) the text. */
 function committeeByName($name) {
     static $map = null;
-    if ($map === null) {
-        $map = [];
-        foreach (q('SELECT id, name FROM committees')->fetchAll() as $c) $map[norm($c['name'])] = (int)$c['id'];
-        $map['foodcommittee'] = $map['foodcom'] ?? null;
-        $map['dance'] = $map['finaldance'] ?? null;
-        $map['character'] = $map['characters'] ?? null;
-        $map['prop'] = $map['props'] ?? null;
-        $map['script'] = $map['scriptwriter'] ?? null;
-        $map['scripts'] = $map['scriptwriter'] ?? null;
-        $map['scriptwriters'] = $map['scriptwriter'] ?? null;
-    }
-    return $map[norm($name)] ?? null;
+    if ($map === null) { $map = []; foreach (q('SELECT id, name FROM committees')->fetchAll() as $c) $map[(int)$c['id']] = norm($c['name']); }
+    $n = norm($name);
+    if (strlen($n) < 3) return null;
+    $hit = array_keys($map, $n, true);
+    if (count($hit) === 1) return (int)$hit[0];
+    $hit = [];
+    foreach ($map as $id => $cn) if ($cn !== '' && (strpos($cn, $n) !== false || strpos($n, $cn) !== false)) $hit[] = $id;
+    return count($hit) === 1 ? (int)$hit[0] : null;
 }
 
 /** Events visible to $u with present/total/marked counts. $extra is appended to WHERE (trusted SQL). */
@@ -136,7 +147,7 @@ switch ($action) {
         }
         if ($r['status'] !== 'active') out(false, 'This account is disabled. Ask the Secretariat.');
         if ($n) q('DELETE FROM rate_limits WHERE rkey = ?', [$key]);
-        set_login((int)$r['id']);
+        set_login((int)$r['id'], $r['password']);
         $lu = ['id' => $r['id'], 'username' => $r['username'], 'full_name' => $r['full_name'], 'role' => $r['role'], 'committee_id' => $r['committee_id'], 'status' => $r['status']];
         out(true, 'Welcome!', meData($lu));
     }
@@ -213,8 +224,10 @@ switch ($action) {
         $e = q('SELECT * FROM events WHERE id = ?', [(int)($in['id'] ?? 0)])->fetch();
         if (!$e) out(false, 'Event not found.');
         if (!isSec($u) && !($e['kind'] === 'custom' && (int)$e['created_by'] === (int)$u['id'])) out(false, 'You can only delete schedules you added.');
-        q('DELETE FROM attendance WHERE event_id = ?', [$e['id']]);
-        q('DELETE FROM events WHERE id = ?', [$e['id']]);
+        tx(function () use ($e) {
+            q('DELETE FROM attendance WHERE event_id = ?', [$e['id']]);
+            q('DELETE FROM events WHERE id = ?', [$e['id']]);
+        });
         out(true, 'Schedule and its attendance deleted.');
     }
 
@@ -316,8 +329,10 @@ switch ($action) {
     case 'member_delete': {
         needSec();
         $id = (int)($in['id'] ?? 0);
-        q('DELETE FROM attendance WHERE member_id = ?', [$id]);
-        q('DELETE FROM members WHERE id = ?', [$id]);
+        tx(function () use ($id) {
+            q('DELETE FROM attendance WHERE member_id = ?', [$id]);
+            q('DELETE FROM members WHERE id = ?', [$id]);
+        });
         out(true, 'Member and their attendance deleted.');
     }
 
@@ -440,13 +455,26 @@ switch ($action) {
         out(true, 'Account deleted. Attendance they marked is kept.');
     }
 
+    case 'settings_save': {
+        needSec();
+        $a = (string)($in['season_start'] ?? ''); $b = (string)($in['season_end'] ?? '');
+        if (!validDate($a) || !validDate($b)) out(false, 'Choose valid dates.');
+        if ($a > $b) out(false, 'The first day must be before the last day.');
+        if ((strtotime($b) - strtotime($a)) > 86400 * 400) out(false, 'The season is too long (max 400 days).');
+        $up = $pdo->prepare('INSERT INTO settings (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = VALUES(v)');
+        foreach (['season_start' => $a, 'season_end' => $b] as $k => $v) $up->execute([$k, $v]);
+        out(true, 'Season dates saved.', ['season_start' => $a, 'season_end' => $b]);
+    }
+
     case 'change_password': {
         $u = need();
         $cur = (string)($in['current'] ?? ''); $new = (string)($in['password'] ?? '');
         if (strlen($new) < 6) out(false, 'New password must be at least 6 characters.');
         $h = q('SELECT password FROM users WHERE id = ?', [$u['id']])->fetchColumn();
         if (!$h || !password_verify($cur, $h)) out(false, 'Your current password is wrong.');
-        q('UPDATE users SET password = ? WHERE id = ?', [password_hash($new, PASSWORD_BCRYPT), $u['id']]);
+        $nh = password_hash($new, PASSWORD_BCRYPT);
+        q('UPDATE users SET password = ? WHERE id = ?', [$nh, $u['id']]);
+        set_login((int)$u['id'], $nh); // keep this device signed in; every other device is signed out
         out(true, 'Password changed.');
     }
 
@@ -455,7 +483,7 @@ switch ($action) {
         $u = need(); $sc = scope($u);
         $mj = $sc ? " WHERE m.committee_id = $sc" : '';
         $ms = $sc ? " WHERE committee_id = $sc" : '';
-        $a = q("SELECT COUNT(*) c, COALESCE(MAX(a.marked_at), '') t FROM attendance a JOIN members m ON m.id = a.member_id$mj")->fetch();
+        $a = q("SELECT COUNT(*) c, COALESCE(MAX(a.marked_at), '') t, COALESCE(SUM(a.status = 'present'), 0) p, COALESCE(SUM(a.status = 'excused'), 0) x FROM attendance a JOIN members m ON m.id = a.member_id$mj")->fetch();
         $m = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(id, '-', full_name, '-', committee_id, '-', member_role, '-', status, '-', scholar_type, '-', COALESCE(ministry, '')))), 0) s FROM members$ms")->fetch();
         $e = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(id, '-', title, '-', event_date, '-', COALESCE(event_time, ''), '-', COALESCE(end_time, ''), '-', COALESCE(location, ''), '-', COALESCE(committee_id, '')))), 0) s FROM events")->fetch();
         out(true, '', ['hash' => md5(json_encode([$a, $m, $e]))]);

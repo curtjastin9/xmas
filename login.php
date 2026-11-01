@@ -5,7 +5,7 @@ if (!empty($_SESSION['uid'])) { header('Location: index.php'); exit; }
 ?><!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Christmas Presentation Attendance · Log in</title>
+<title>Christmas Presentation Attendance System · Log in</title>
 <meta name="description" content="Attendance system for every committee and every rehearsal of the Christmas Presentation.">
 <link rel="icon" type="image/png" href="favicon.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
@@ -13,9 +13,9 @@ if (!empty($_SESSION['uid'])) { header('Location: index.php'); exit; }
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" media="print" onload="this.media='all'"><noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"></noscript>
-<link rel="stylesheet" href="login.css?v=1">
+<link rel="stylesheet" href="login.css?v=2">
 </head><body>
-<div class="bg" aria-hidden="true"><div class="tiles" id="tiles"></div><div class="shade"></div><div class="spot" id="spot"></div></div>
+<div class="bg" aria-hidden="true"><div class="tiles" id="tiles"></div><div class="shade"></div><div class="spot" id="spot"></div><div class="snow" id="snow"></div></div>
 
 <header class="top">
   <a class="brand" href="login.php" aria-label="Christmas Presentation Attendance"><img src="logo.png" width="524" height="600" alt=""><span><b>MQAP</b><small>PYM ATTENDANCE</small></span></a>
@@ -24,9 +24,9 @@ if (!empty($_SESSION['uid'])) { header('Location: index.php'); exit; }
 
 <main class="hero">
   <div class="logo-wrap rise" style="--i:0"><img src="logo.png" width="524" height="600" alt="Logo: Bringing Christ to our fellow Youth"></div>
-  <div class="pill rise" style="--i:1"><i class="fas fa-church"></i> Parish Youth Ministry</div>
-  <h1 class="rise" style="--i:2">Christmas <span class="gold">Presentation</span><br>Attendance System</h1>
-  <p class="tag rise" style="--i:3">Every youth. Every rehearsal. Every committee.</p>
+  <div class="pill rise" style="--i:1"><i class="fas fa-tree"></i> Christmas Presentation Attendance System</div>
+  <h1 class="rise" style="--i:2">Every <span class="gold">Rehearsal.</span><br>Every Committee.</h1>
+  <p class="tag rise" style="--i:3">Bringing Christ to our fellow Youth.</p>
   <p class="lead rise" style="--i:4">A clear, real-time record of attendance for every rehearsal and the Christmas Presentation, managed by your Secretariat and committee leaders.</p>
   <button class="cta rise" style="--i:5" data-open><i class="fas fa-right-to-bracket"></i> Login <i class="fas fa-chevron-right ar"></i></button>
   <div class="feats rise" style="--i:6">
@@ -35,7 +35,7 @@ if (!empty($_SESSION['uid'])) { header('Location: index.php'); exit; }
     <span class="feat"><i class="fas fa-shield-halved"></i> Secure leader accounts</span>
   </div>
 </main>
-<footer class="foot">Parish Youth Ministry · Accounts are issued by the Secretariat</footer>
+<footer class="foot">Christmas Presentation Attendance System · Accounts are issued by the Secretariat</footer>
 
 <div class="modal" id="modal" aria-hidden="true">
   <div class="mback" data-close></div>
@@ -74,6 +74,16 @@ if (!empty($_SESSION['uid'])) { header('Location: index.php'); exit; }
   box.innerHTML = h;
   const spot = document.getElementById('spot');
   addEventListener('pointermove', e => { spot.style.setProperty('--mx', e.clientX + 'px'); spot.style.setProperty('--my', e.clientY + 'px'); }, { passive: true });
+
+  /* gentle falling snow */
+  if (!matchMedia('(prefers-reduced-motion:reduce)').matches) {
+    const snow = document.getElementById('snow'), n = innerWidth < 640 ? 22 : 46; let f = '';
+    for (let i = 0; i < n; i++) {
+      const size = 2 + rnd() * 4, left = rnd() * 100, dur = 9 + rnd() * 12, delay = -rnd() * 20, drift = (rnd() * 60 - 30).toFixed(0);
+      f += `<i style="left:${left.toFixed(1)}%;width:${size.toFixed(1)}px;height:${size.toFixed(1)}px;opacity:${(.25 + rnd() * .55).toFixed(2)};animation-duration:${dur.toFixed(1)}s;animation-delay:${delay.toFixed(1)}s;--dx:${drift}px"></i>`;
+    }
+    snow.innerHTML = f;
+  }
 })();
 
 /* login modal */

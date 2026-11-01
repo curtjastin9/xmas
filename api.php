@@ -222,6 +222,27 @@ switch ($action) {
         out(true, 'Schedule and its attendance deleted.');
     }
 
+    case 'events_bulk_delete': {
+        needSec();
+        if (($in['confirm'] ?? '') !== 'CONFIRM') out(false, 'Type CONFIRM to delete.');
+        $ids = array_values(array_unique(array_filter(array_map('intval', (array)($in['ids'] ?? [])))));
+        if (!$ids) out(false, 'Select at least one schedule.');
+        if (count($ids) > 500) out(false, 'Too many selected at once (max 500).');
+        $ph = implode(',', array_fill(0, count($ids), '?'));
+        try {
+            $pdo->beginTransaction();
+            $da = $pdo->prepare("DELETE FROM attendance WHERE event_id IN ($ph)"); $da->execute($ids);
+            $de = $pdo->prepare("DELETE FROM events WHERE id IN ($ph)"); $de->execute($ids);
+            $pdo->commit();
+        } catch (Throwable $ex) {
+            if ($pdo->inTransaction()) $pdo->rollBack();
+            error_log('events_bulk_delete: ' . $ex->getMessage());
+            out(false, 'Could not delete the schedules. Please try again.');
+        }
+        $ne = $de->rowCount(); $na = $da->rowCount();
+        out(true, "$ne schedule" . ($ne === 1 ? '' : 's') . " and $na attendance record" . ($na === 1 ? '' : 's') . ' deleted.');
+    }
+
     /* ---------------- Attendance ---------------- */
     case 'att_get': {
         $u = need(); $e = eventFor($u, $in['event_id'] ?? 0); $w = memberScope($u, $e);

@@ -321,27 +321,68 @@ VIEWS.schedule = async () => {
   let rows = await call('events_list'); if (!rows) return;
   const today = todayStr();
   let tab = 'upcoming';
+  const sel = new Set(); let curList = [];
   const draw = () => {
     const list = rows.filter(e => tab === 'all' ? true : tab === 'upcoming' ? e.event_date >= today : e.event_date < today);
     if (tab === 'past') list.reverse();
-    $('#sch').innerHTML = list.length ? `<div class="tw tc"><table><thead><tr><th>Date</th><th>Title</th><th>For</th><th>Added by</th><th>Marked</th><th></th></tr></thead><tbody>
-      ${list.map(e => `<tr><td data-label="Date"><span><b>${esc(fmtDate(e.event_date))}</b><br><small>${esc(timeRange(e))}${e.location ? ' · ' + esc(e.location) : ''}</small></span></td>
+    curList = list;
+    $('#sch').innerHTML = list.length ? `<div class="tw tc"><table><thead><tr>${isSec() ? '<th style="width:40px"></th>' : ''}<th>Date</th><th>Title</th><th>For</th><th>Added by</th><th>Marked</th><th></th></tr></thead><tbody>
+      ${list.map(e => `<tr>${isSec() ? `<td data-label="Select"><input type="checkbox" class="bk" data-id="${e.id}" ${sel.has(+e.id) ? 'checked' : ''} style="width:20px;height:20px" aria-label="Select schedule"></td>` : ''}<td data-label="Date"><span><b>${esc(fmtDate(e.event_date))}</b><br><small>${esc(timeRange(e))}${e.location ? ' · ' + esc(e.location) : ''}</small></span></td>
         <td data-label="Title"><span>${esc(e.title)} ${e.event_date === today ? '<span class="pill today">Today</span>' : ''}</span></td>
         <td data-label="For">${evFor(e)}</td><td data-label="Added by">${esc(e.added_by || 'Secretariat')}</td><td data-label="Marked">${e.marked}/${e.total}</td>
         <td class="act" style="white-space:nowrap;text-align:right"><a class="btn sm" href="#/attendance/${e.id}"><i class="fas fa-clipboard-check"></i> Attendance</a>
           ${e.can_edit ? `<button class="btn sm ghost" data-edit="${e.id}" aria-label="Edit">Edit</button><button class="btn sm no" data-del="${e.id}" aria-label="Delete">Delete</button>` : '<span class="sub">View only</span>'}</td></tr>`).join('')}
       </tbody></table></div>` : '<div class="empty">No schedules here.</div>';
+    drawBulk();
+  };
+  const drawBulk = () => {
+    if (!isSec()) return;
+    const ids = new Set(rows.map(r => +r.id));
+    [...sel].forEach(i => { if (!ids.has(i)) sel.delete(i); });
+    const n = sel.size, all = curList.length && curList.every(e => sel.has(+e.id));
+    $('#bulk').innerHTML = curList.length ? `<div class="bar" style="margin:0 0 12px">
+      <label style="display:flex;gap:8px;align-items:center;font-weight:600;cursor:pointer"><input type="checkbox" id="selall" style="width:20px;height:20px;min-height:0;margin:0" ${all ? 'checked' : ''}> Select all (${curList.length})</label>
+      ${n ? `<button class="btn sm no" id="bdel"><i class="fas fa-trash"></i> Delete selected (${n})</button><button class="btn sm ghost" id="bclr">Clear</button>` : ''}</div>` : '';
+  };
+  const bulkDelete = () => {
+    const picked = rows.filter(r => sel.has(+r.id));
+    if (!picked.length) return;
+    const att = picked.reduce((a, r) => a + (+r.marked || 0), 0), s = picked.length > 1 ? 's' : '';
+    modal(`<h3>Delete ${picked.length} schedule${s}?</h3>
+      <p>This permanently deletes the selected schedule${s} and <b>${att}</b> saved attendance record${att === 1 ? '' : 's'} for ${picked.length > 1 ? 'them' : 'it'}. This cannot be undone.</p>
+      <div class="sub" style="margin:8px 0;max-height:130px;overflow:auto">${picked.map(r => esc(fmtDate(r.event_date)) + ' · ' + esc(r.title)).join('<br>')}</div>
+      <label>Type <b>CONFIRM</b> to continue<input id="cfm" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="CONFIRM"></label>
+      <div class="actions"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn pri" id="bgo" disabled style="background:var(--no);border-color:var(--no)"><i class="fas fa-trash"></i> Delete</button></div>`,
+      (el, close) => {
+        $('#cfm', el).addEventListener('input', ev => { $('#bgo', el).disabled = ev.target.value.trim() !== 'CONFIRM'; });
+        $('#bgo', el).onclick = async ev => {
+          if ($('#cfm', el).value.trim() !== 'CONFIRM') return;
+          if (await busy(ev.currentTarget, () => call('events_bulk_delete', { ids: picked.map(r => +r.id), confirm: 'CONFIRM' }, true))) { sel.clear(); close(); reload(); }
+        };
+      });
   };
   view().innerHTML = `<div class="card">
     <div class="head"><div><h3>Schedule</h3><div class="sub">${isSec() ? 'Fixed events are for everyone. You can also add a schedule for one committee.' : 'Fixed events come from the Secretariat. You can add schedules for your own committee.'}</div></div>
       <button class="btn pri" id="add"><i class="fas fa-plus"></i> Add schedule</button></div>
     <div class="chips" id="tabs"><button class="chip on" data-t="upcoming">Upcoming</button><button class="chip" data-t="past">Past</button><button class="chip" data-t="all">All</button></div>
-    <div id="sch"></div></div>`;
+    <div id="bulk"></div><div id="sch"></div></div>`;
   const reload = () => route();
   draw();
   liveRefresh = async () => { const r = await api('events_list'); if (!r.success || tok !== routeTok) return false; rows = r.data; draw(); };
   $('#add').onclick = () => eventModal(null, reload);
-  $('#tabs').onclick = e => { const b = e.target.closest('[data-t]'); if (!b) return; tab = b.dataset.t; $$('#tabs .chip').forEach(c => c.classList.toggle('on', c === b)); draw(); };
+  $('#sch').addEventListener('change', e => {
+    const c = e.target.closest('.bk'); if (!c) return;
+    c.checked ? sel.add(+c.dataset.id) : sel.delete(+c.dataset.id); drawBulk();
+  });
+  $('#bulk').addEventListener('change', e => {
+    if (e.target.id !== 'selall') return;
+    curList.forEach(r => e.target.checked ? sel.add(+r.id) : sel.delete(+r.id)); draw();
+  });
+  $('#bulk').addEventListener('click', e => {
+    if (e.target.closest('#bclr')) { sel.clear(); draw(); }
+    if (e.target.closest('#bdel')) bulkDelete();
+  });
+  $('#tabs').onclick = e => { const b = e.target.closest('[data-t]'); if (!b) return; tab = b.dataset.t; sel.clear(); $$('#tabs .chip').forEach(c => c.classList.toggle('on', c === b)); draw(); };
   $('#sch').onclick = async e => {
     const ed = e.target.closest('[data-edit]'), del = e.target.closest('[data-del]');
     if (ed) eventModal(rows.find(r => r.id == ed.dataset.edit), reload);

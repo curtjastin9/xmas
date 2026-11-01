@@ -1,0 +1,147 @@
+/* ============================================================
+   mobile.css — loaded AFTER style.css. Roles + phone/tablet experience.
+   ============================================================ */
+
+/* ---------- role badges ---------- */
+.pill.lead{background:var(--gold-bg);color:var(--gold-ink);border:1px solid #F1DDA0;white-space:nowrap}
+.pill.lead i{font-size:10px;margin-right:4px}
+.pill.member{background:#EEF0F5;color:#4A5468}
+.arow.isl{box-shadow:inset 3px 0 0 var(--gold);background:#FFFCF2}
+.arow .who2 b{margin-right:6px}
+tr.isl td:first-child{box-shadow:inset 3px 0 0 var(--gold)}
+
+/* insert-members grid now has a Role column */
+.irow{grid-template-columns:1.5fr 1.1fr .9fr 1fr 42px}
+
+/* sticky save bar for the attendance screen */
+.actions.stick{position:sticky;bottom:0;z-index:5;margin:14px -24px -24px;padding:12px 24px calc(12px + env(safe-area-inset-bottom));
+  background:linear-gradient(rgba(255,255,255,0),#fff 28%);border-radius:0 0 var(--r) var(--r)}
+
+/* ---------- touch basics (all sizes) ---------- */
+html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
+button,.btn,.chip,.day,.seg button,a.btn,select{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+body{overscroll-behavior-y:none}
+header{padding-top:max(14px,env(safe-area-inset-top))}
+#toasts{top:max(14px,env(safe-area-inset-top))}
+#nav button,.btn,.chip{min-height:44px}
+.btn.sm{min-height:40px}
+
+/* ---------- tablet (iPad portrait/landscape, small laptops) ---------- */
+@media(min-width:861px) and (max-width:1180px){
+  #side{width:214px}
+  main{margin-left:214px}
+  header{padding-left:22px;padding-right:22px}
+  #view{padding:22px 22px 64px}
+  .grid2{gap:14px}
+  .brand b{font-size:18px}
+}
+@media(min-width:601px) and (max-width:860px){
+  #side{width:300px}
+  #view{padding:22px 22px 72px}
+  .stats{grid-template-columns:repeat(2,1fr)}
+  .box{max-width:560px}
+}
+
+/* ---------- phones & drawer layout ---------- */
+@media(max-width:860px){
+  #side{width:min(84vw,300px);padding-top:max(22px,env(safe-area-inset-top));padding-bottom:max(16px,env(safe-area-inset-bottom));overflow-y:auto;box-shadow:12px 0 40px rgba(0,0,0,.25)}
+  #burger{width:46px;height:46px;flex:none}
+  header h2{font-size:17px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .actions.stick{margin:14px -14px -14px;padding-left:14px;padding-right:14px}
+}
+
+@media(max-width:640px){
+  body{font-size:15px}
+  /* 16px inputs stop iOS Safari zooming into fields */
+  input,select,textarea,.bar input,.bar select{font-size:16px!important}
+  .card{padding:16px;border-radius:12px}
+  .head{margin-bottom:14px}
+  .head .bar{width:100%}
+  .head .bar .btn{flex:1 1 auto}
+  .welcome h2{font-size:21px}
+  .stats{grid-template-columns:repeat(2,1fr);gap:10px}
+  .stat{padding:14px 14px 12px}
+  .stat b{font-size:24px}
+  .grid2{gap:14px}
+  .bar{gap:8px}
+  .bar input{min-width:0;flex:1 1 100%}
+  .bar select,.bar .btn{flex:1 1 calc(50% - 8px)}
+  .bar .seg{width:100%}
+  .bar .seg button{flex:1}
+  .chip{padding:8px 16px}
+
+  /* tables → stacked cards */
+  .tw.tc{border:0;background:none;overflow:visible}
+  .tw.tc table,.tw.tc thead,.tw.tc tbody,.tw.tc tr,.tw.tc td{display:block;width:100%;min-width:0}
+  .tw.tc thead{display:none}
+  .tw.tc tr{background:#fff;border:1px solid var(--line);border-radius:12px;padding:8px 14px;margin-bottom:10px;box-shadow:var(--sh)}
+  .tw.tc tr.isl{border-left:4px solid var(--gold)}
+  .tw.tc tr.isl td:first-child{box-shadow:none}
+  .tw.tc td{border:0;padding:6px 0;display:flex;justify-content:space-between;align-items:center;gap:14px;text-align:right}
+  .tw.tc td::before{content:attr(data-label);flex:none;color:var(--soft);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;text-align:left}
+  .tw.tc td:not([data-label])::before{content:none}
+  .tw.tc td.act{justify-content:flex-end;flex-wrap:wrap;gap:8px;padding-top:10px;margin-top:4px;border-top:1px solid #EEF0F4}
+  .tw.tc td.act .btn{flex:1 1 auto}
+  .tw.tc tbody tr:hover{background:#fff}
+
+  /* attendance rows: big thumb-friendly buttons */
+  .arow{padding:14px 12px}
+  .arow .ctl{width:100%}
+  .arow .seg{width:100%;display:flex}
+  .arow .seg button{flex:1;min-height:44px;padding:8px 4px;font-size:14px}
+  .arow .tin{width:100%;justify-content:space-between}
+  .arow .tin input{min-height:44px;flex:0 0 150px}
+  #cnt{gap:6px}
+  .actions.stick .btn{width:100%}
+
+  /* modals become bottom sheets */
+  .back{align-items:flex-end;padding:0}
+  .box{max-width:none!important;border-radius:18px 18px 0 0;max-height:94dvh;padding:22px 16px calc(20px + env(safe-area-inset-bottom));animation:sheet .28s cubic-bezier(.2,.8,.2,1)}
+  .actions{margin-top:16px}
+  .box .actions .btn{flex:1}
+  @keyframes sheet{from{transform:translateY(40px);opacity:0}}
+
+  /* insert-members rows */
+  .irow{grid-template-columns:1fr 1fr;gap:8px}
+  .irow .nm,.irow input[data-f="m"]{grid-column:1/-1}
+  .irow .rm{grid-column:1/-1;min-height:40px}
+  #irows .irow{padding:10px;border:1px solid var(--line);border-radius:10px;background:#FAFBFD}
+  #irows{max-height:46dvh}
+
+  /* calendars */
+  .day{min-height:44px}
+  .cal{padding:8px}
+
+  .feat{padding:16px}
+  .toast{font-size:14px}
+}
+
+@media(max-width:380px){
+  #view{padding:14px 10px 64px}
+  .stats{grid-template-columns:1fr 1fr}
+  .arow .seg button{font-size:13px}
+}
+
+/* phones in landscape: keep the sticky bar compact */
+@media(max-height:480px) and (orientation:landscape){
+  .actions.stick{position:static}
+  .box{max-height:98dvh}
+}
+
+/* hover-less devices: avoid sticky hover states */
+@media(hover:none){
+  .btn:hover,.chip:hover,.day:hover{background:revert-layer}
+}
+
+/* not yet marked */
+.pill.pending{background:#EEF0F5;color:#667089;border:1px dashed #C5CBD9}
+
+/* records summary total */
+.sumgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+.sum{border:1px solid var(--line);border-left:4px solid #94a3b8;border-radius:12px;padding:14px 16px;background:#fff}
+.sum b{display:block;font:700 30px/1.1 "Plus Jakarta Sans",system-ui,sans-serif;letter-spacing:-.02em}
+.sum span{display:block;font-size:11.5px;font-weight:700;letter-spacing:.08em;color:var(--soft);margin-top:6px}
+.sum small{color:var(--soft);font-size:12px}
+.sum.ok{border-left-color:var(--ok)}.sum.ex{border-left-color:var(--gold)}.sum.no{border-left-color:#C8372D}.sum.nm{border-left-color:#94a3b8;background:#F8F9FB}
+.meter.stack{display:flex;height:10px;margin-top:0}.meter.stack i{flex:none;height:100%;border-radius:0}
+@media(max-width:640px){.sumgrid{grid-template-columns:repeat(2,1fr)}.sum b{font-size:24px}}

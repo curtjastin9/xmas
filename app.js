@@ -210,7 +210,10 @@ async function route() {
 
 /* ---------- shared event row ---------- */
 function evFor(e) {
-  return e.committee_id ? comTag(e.committee_name, e.committee_id) : '<span class="pill fixed">Whole group</span>';
+  const ids = e.committee_ids || [];
+  if (!ids.length) return '<span class="pill fixed">Whole group</span>';
+  const tags = ids.map(id => comTag((COMMITTEES.find(c => +c.id === +id) || {}).name || '?', id)).join(' ');
+  return ids.length > 1 ? '<span class="pill fixed">Merged</span> ' + tags : tags;
 }
 function evMeta(e) {
   return [fmtDate(e.event_date), timeRange(e), e.location].filter(Boolean).map(esc).join(' · ');
@@ -256,7 +259,8 @@ VIEWS.dashboard = async () => {
 /* ================= SCHEDULE ================= */
 function eventModal(e, done) {
   e = e || {};
-  const editing = !!e.id, cid = e.committee_id || '';
+  const editing = !!e.id, cur = (e.committee_ids || []).map(Number);
+  const mergeable = COMMITTEES.filter(c => +c.can_merge);
   const sel = new Set(editing ? [e.event_date] : []);
   const base = new Date((editing ? e.event_date : todayStr()) + 'T00:00:00');
   let vy = base.getFullYear(), vm = base.getMonth();
@@ -279,8 +283,11 @@ function eventModal(e, done) {
         <label>End time<input name="end_time" type="time" value="${esc((e.end_time || '').slice(0, 5))}"></label>
       </div>
       <label>Location<select name="location"><option value="">No location</option>${locs.map(n => `<option ${n === e.location ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
-      ${isSec() ? `<label>For<select name="committee_id"><option value="">Everyone – all committees &amp; leaders</option>
-        ${COMMITTEES.map(c => `<option value="${c.id}" ${+cid === +c.id ? 'selected' : ''}>${esc(c.name)} only</option>`).join('')}</select></label>`
+      ${isSec() ? `<label>For<select name="scope" id="scope"><option value="all">Everyone – all committees &amp; leaders</option>
+        ${COMMITTEES.map(c => `<option value="${c.id}" ${cur.length === 1 && cur[0] === +c.id ? 'selected' : ''}>${esc(c.name)} only</option>`).join('')}
+        ${mergeable.length > 1 ? `<option value="merge" ${cur.length > 1 ? 'selected' : ''}>Merged practice – choose committees…</option>` : ''}</select></label>
+        <div id="mergebox" class="mergebox ${cur.length > 1 ? '' : 'hidden'}"><div class="sub">Tick every committee that practises together. Each leader only sees and marks their own committee's members.</div>
+          ${mergeable.map(c => `<label class="mchk"><input type="checkbox" class="ck" name="mc" value="${c.id}" ${cur.includes(+c.id) ? 'checked' : ''}> ${comTag(c.name, c.id)}</label>`).join('')}</div>`
         : `<p class="sub" style="margin-top:12px">This schedule is only for <b>${esc(ME.committee_name || 'your committee')}</b>.</p>`}
       <div class="actions"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn pri" id="sv">Save</button></div>
     </form>`, (el, close) => {
@@ -310,10 +317,17 @@ function eventModal(e, done) {
         draw();
       };
       $('#picked', el).onclick = ev => { const p = ev.target.closest('[data-rm]'); if (p && !editing) { sel.delete(p.dataset.rm); draw(); } };
+      if (isSec()) $('#scope', el).onchange = () => $('#mergebox', el).classList.toggle('hidden', $('#scope', el).value !== 'merge');
       $('#ef', el).addEventListener('submit', async ev => {
         ev.preventDefault();
         if (!sel.size) { toast('Tap at least one date on the calendar.', true); return; }
         const body = Object.fromEntries(new FormData(ev.target));
+        if (isSec()) {
+          const sc = body.scope;
+          body.committee_ids = sc === 'all' ? [] : sc === 'merge' ? $$('input[name=mc]:checked', ev.target).map(x => +x.value) : [+sc];
+          if (sc === 'merge' && body.committee_ids.length < 2) { toast('Tick at least two committees for a merged practice.', true); return; }
+          delete body.scope; delete body.mc;
+        }
         body.id = e.id || 0;
         body.dates = [...sel].sort();
         body.event_date = body.dates[0];
@@ -475,7 +489,7 @@ async function pickEvent(live) {
     let h = '<span></span>'.repeat(first.getDay());
     for (let d = 1; d <= n; d++) {
       const ds = `${vy}-${pad(vm + 1)}-${pad(d)}`, evs = byDate[ds] || [], off = !inSeason(ds);
-      const dots = evs.slice(0, 4).map(e => `<i style="background:${esc(e.committee_id ? comColor(e.committee_id) : GROUP_COLOR)}"></i>`).join('');
+      const dots = evs.slice(0, 4).map(e => `<i style="background:${esc((e.committee_ids || []).length ? comColor(e.committee_ids[0]) : GROUP_COLOR)}"></i>`).join('');
       h += `<button type="button" class="day${ds === sel ? ' on' : ''}${ds === today ? ' now' : ''}${evs.length ? ' has' : ''}" data-d="${ds}"${off ? ' disabled aria-disabled="true"' : ''}>${d}<span class="dots">${dots}</span></button>`;
     }
     $('#days').innerHTML = h;
@@ -509,20 +523,21 @@ async function takeAttendance(id) {
   members.forEach(m => { const s = fromServer(m); state.set(+m.member_id, s); base.set(+m.member_id, JSON.stringify(s)); });
   const dirty = () => [...state].some(([mid, s]) => JSON.stringify(s) !== base.get(mid));
   leaveGuard = dirty;
-  const multi = isSec() && !ev.committee_id; // Secretariat on a whole-group event sees several committees
-  const evName = ev.committee_id ? (COMMITTEES.find(c => +c.id === +ev.committee_id) || {}).name : null;
+  const evIds = ev.committee_ids || [];
+  const multi = isSec() && evIds.length !== 1; // Secretariat on a whole-group or merged schedule sees several committees
+  const cfList = evIds.length ? COMMITTEES.filter(c => evIds.includes(+c.id)) : COMMITTEES;
   let q = '', cf = '';
 
   view().innerHTML = `
     <div class="card">
       <a class="btn sm ghost" href="#/attendance" style="margin-bottom:12px"><i class="fas fa-arrow-left"></i> All schedules</a>
       <div class="head"><div><h3>${esc(ev.title)}</h3><div class="sub">${evMeta(ev)}</div>
-        <div style="margin-top:6px">${ev.committee_id ? comTag(evName, ev.committee_id) : '<span class="pill fixed">Whole group</span>'}</div></div></div>
+        <div style="margin-top:6px">${evFor(ev)}</div></div></div>
       <div class="stats" id="cnt" style="margin-bottom:0"></div>
     </div>
     <div class="card">
       <div class="bar"><input id="q" type="search" placeholder="Search name, ministry or committee…" aria-label="Search">
-        ${multi ? `<select id="cf" aria-label="Committee"><option value="">All committees</option>${COMMITTEES.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>` : ''}
+        ${multi ? `<select id="cf" aria-label="Committee"><option value="">All committees</option>${cfList.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>` : ''}
         <button class="btn sm ok" id="allp"><i class="fas fa-check-double"></i> Mark all present</button>
         <button class="btn sm ghost" id="clr">Clear all</button></div>
       <div class="tw" id="list" style="border-radius:var(--r)"></div>

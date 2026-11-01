@@ -46,9 +46,14 @@ function locations() {
     try { return q('SELECT id, name FROM locations ORDER BY sort_order, id')->fetchAll(); }
     catch (Throwable $e) { error_log('locations: ' . $e->getMessage()); return []; }
 }
+/** All committees; `can_merge` marks the ones that can share a merged practice. */
+function committees() {
+    try { return q('SELECT id, name, color, can_merge FROM committees ORDER BY sort_order')->fetchAll(); }
+    catch (Throwable $e) { error_log('committees: ' . $e->getMessage()); return q('SELECT id, name, color FROM committees ORDER BY sort_order')->fetchAll(); }
+}
 function meData($u) {
     $u['committee_name'] = $u['committee_id'] ? q('SELECT name FROM committees WHERE id = ?', [$u['committee_id']])->fetchColumn() : null;
-    return ['user' => $u, 'committees' => q('SELECT id, name, color FROM committees ORDER BY sort_order')->fetchAll(), 'settings' => settings(), 'locations' => locations()];
+    return ['user' => $u, 'committees' => committees(), 'settings' => settings(), 'locations' => locations()];
 }
 function isSec($u) { return $u['role'] === 'secretariat'; }
 function needSec() { $u = need(); if (!isSec($u)) out(false, 'Only the Secretariat can do this.'); return $u; }
@@ -86,22 +91,35 @@ function committeeByName($name) {
     return count($hit) === 1 ? (int)$hit[0] : null;
 }
 
+/** SQL test: is member alias $m expected at event alias $e? An event with no committee rows is for the whole group. */
+function expectedSql($e = 'e', $m = 'm') {
+    return "(NOT EXISTS (SELECT 1 FROM event_committees x WHERE x.event_id = $e.id) OR EXISTS (SELECT 1 FROM event_committees x WHERE x.event_id = $e.id AND x.committee_id = $m.committee_id))";
+}
+/** committee ids an event is for, [] = whole group */
+function eventCommittees($eventId) {
+    return array_map('intval', q('SELECT committee_id FROM event_committees WHERE event_id = ? ORDER BY committee_id', [(int)$eventId])->fetchAll(PDO::FETCH_COLUMN));
+}
+
 /** Events visible to $u with present/total/marked counts. $extra is appended to WHERE (trusted SQL). */
 function eventList($u, $extra = '', $params = []) {
     $sc = scope($u);
-    $vis = $sc ? " AND (e.committee_id IS NULL OR e.committee_id = $sc)" : '';
+    $vis = $sc ? " AND (NOT EXISTS (SELECT 1 FROM event_committees v WHERE v.event_id = e.id) OR EXISTS (SELECT 1 FROM event_committees v WHERE v.event_id = e.id AND v.committee_id = $sc))" : '';
     $ms = $sc ? " AND m.committee_id = $sc" : '';
     $cnt = [];
     foreach (q("SELECT m.committee_id cid, COUNT(*) c FROM members m WHERE m.status = 'active'$ms GROUP BY m.committee_id")->fetchAll() as $r) $cnt[(int)$r['cid']] = (int)$r['c'];
     $all = array_sum($cnt);
     $att = [];
     foreach (q("SELECT a.event_id, SUM(a.status = 'present') p, COUNT(*) t FROM attendance a JOIN members m ON m.id = a.member_id WHERE 1=1$ms GROUP BY a.event_id")->fetchAll() as $r) $att[(int)$r['event_id']] = [(int)$r['p'], (int)$r['t']];
-    $rows = q("SELECT e.id, e.title, e.event_date, e.event_time, e.end_time, e.location, e.committee_id, e.kind, e.created_by, u.full_name AS added_by, c.name AS committee_name
-        FROM events e LEFT JOIN committees c ON c.id = e.committee_id LEFT JOIN users u ON u.id = e.created_by
+    $links = [];
+    foreach (q('SELECT event_id, committee_id FROM event_committees ORDER BY committee_id')->fetchAll() as $r) $links[(int)$r['event_id']][] = (int)$r['committee_id'];
+    $rows = q("SELECT e.id, e.title, e.event_date, e.event_time, e.end_time, e.location, e.kind, e.created_by, u.full_name AS added_by
+        FROM events e LEFT JOIN users u ON u.id = e.created_by
         WHERE 1=1$vis $extra ORDER BY e.event_date, e.event_time", $params)->fetchAll();
     foreach ($rows as &$r) {
+        $ids = $links[(int)$r['id']] ?? [];
         $a = $att[(int)$r['id']] ?? [0, 0];
-        $r['total'] = $r['committee_id'] ? ($cnt[(int)$r['committee_id']] ?? 0) : $all;
+        $r['committee_ids'] = $ids;
+        $r['total'] = $ids ? array_sum(array_map(fn($c) => $cnt[$c] ?? 0, $ids)) : $all;
         $r['present'] = $a[0]; $r['marked'] = $a[1];
         $r['can_edit'] = (isSec($u) || ($r['kind'] === 'custom' && (int)$r['created_by'] === (int)$u['id'])) ? 1 : 0;
     }
@@ -110,14 +128,17 @@ function eventList($u, $extra = '', $params = []) {
 function eventFor($u, $id) {
     $e = q('SELECT * FROM events WHERE id = ?', [(int)$id])->fetch();
     if (!$e) out(false, 'Event not found.');
+    unset($e['committee_id']);
+    $e['committee_ids'] = eventCommittees($e['id']);
     $sc = scope($u);
-    if ($sc && $e['committee_id'] && (int)$e['committee_id'] !== $sc) out(false, 'You do not have access to this event.');
+    if ($sc && $e['committee_ids'] && !in_array($sc, $e['committee_ids'], true)) out(false, 'You do not have access to this event.');
     return $e;
 }
-/** SQL fragment limiting members (alias m) to those expected at event $e for user $u. */
+/** SQL fragment limiting members (alias m) to those $u may see for event $e: a leader only ever gets their own committee. */
 function memberScope($u, $e) {
-    $cid = $e['committee_id'] ? (int)$e['committee_id'] : scope($u);
-    return $cid ? " AND m.committee_id = $cid" : '';
+    $sc = scope($u);
+    if ($sc) return " AND m.committee_id = $sc";
+    return $e['committee_ids'] ? ' AND m.committee_id IN (' . implode(',', $e['committee_ids']) . ')' : '';
 }
 
 /** Every active leader login account is also a "Leader" member of their committee (so they appear in attendance, members and records). */
@@ -171,7 +192,7 @@ switch ($action) {
         $mw = $sc ? " AND m.committee_id = $sc" : '';
         $rate = [];
         foreach (q("SELECT m.committee_id cid, SUM(a.status = 'present') p, SUM(a.id IS NOT NULL) t FROM events e
-            JOIN members m ON m.status = 'active' AND (e.committee_id IS NULL OR e.committee_id = m.committee_id)$mw
+            JOIN members m ON m.status = 'active' AND " . expectedSql() . "$mw
             LEFT JOIN attendance a ON a.event_id = e.id AND a.member_id = m.id
             WHERE e.event_date <= ? GROUP BY m.committee_id", [$today])->fetchAll() as $r) $rate[$r['cid']] = [(int)$r['p'], (int)$r['t']];
         $cw = $sc ? "WHERE c.id = $sc" : '';
@@ -203,26 +224,34 @@ switch ($action) {
             if (!$okLoc) out(false, 'Choose a location from the list.');
         }
         if (isSec($u)) {
-            $cid = (int)($in['committee_id'] ?? 0) ?: null;
-            if ($cid && !q('SELECT id FROM committees WHERE id = ?', [$cid])->fetch()) out(false, 'Invalid committee.');
-            $kind = $cid ? 'custom' : 'fixed';
+            $cids = array_values(array_unique(array_filter(array_map('intval', (array)($in['committee_ids'] ?? [])))));
+            if ($cids) {
+                $ph = implode(',', array_fill(0, count($cids), '?'));
+                if ((int)q("SELECT COUNT(*) FROM committees WHERE id IN ($ph)", $cids)->fetchColumn() !== count($cids)) out(false, 'Invalid committee.');
+                if (count($cids) > 1 && (int)q("SELECT COUNT(*) FROM committees WHERE can_merge = 1 AND id IN ($ph)", $cids)->fetchColumn() !== count($cids)) out(false, 'Only committees set up for merged practice can be combined.');
+            }
+            $kind = $cids ? 'custom' : 'fixed';
         } else {
-            $cid = scope($u); $kind = 'custom';
+            $cids = [scope($u)]; $kind = 'custom';
         }
+        $link = function ($eid) use ($cids) { foreach ($cids as $c) q('INSERT INTO event_committees (event_id, committee_id) VALUES (?,?)', [$eid, $c]); };
         if ($id) {
             $e = q('SELECT * FROM events WHERE id = ?', [$id])->fetch();
             if (!$e) out(false, 'Event not found.');
             if (!isSec($u) && !($e['kind'] === 'custom' && (int)$e['created_by'] === (int)$u['id'])) out(false, 'You can only edit schedules you added.');
-            q('UPDATE events SET title=?, event_date=?, event_time=?, end_time=?, location=?, committee_id=?, kind=? WHERE id=?', [$title, $dates[0], $time, $end, $loc, $cid, $kind, $id]);
+            tx(function () use ($title, $dates, $time, $end, $loc, $kind, $id, $link) {
+                q('UPDATE events SET title=?, event_date=?, event_time=?, end_time=?, location=?, kind=? WHERE id=?', [$title, $dates[0], $time, $end, $loc, $kind, $id]);
+                q('DELETE FROM event_committees WHERE event_id = ?', [$id]);
+                $link($id);
+            });
             out(true, 'Schedule updated.');
         }
         try {
-            $pdo->beginTransaction();
-            $ins = $pdo->prepare('INSERT INTO events (title, event_date, event_time, end_time, location, committee_id, kind, created_by) VALUES (?,?,?,?,?,?,?,?)');
-            foreach ($dates as $d) $ins->execute([$title, $d, $time, $end, $loc, $cid, $kind, $u['id']]);
-            $pdo->commit();
+            tx(function () use ($dates, $title, $time, $end, $loc, $kind, $u, $link, $pdo) {
+                $ins = $pdo->prepare('INSERT INTO events (title, event_date, event_time, end_time, location, kind, created_by) VALUES (?,?,?,?,?,?,?)');
+                foreach ($dates as $d) { $ins->execute([$title, $d, $time, $end, $loc, $kind, $u['id']]); $link((int)$pdo->lastInsertId()); }
+            });
         } catch (Throwable $ex) {
-            if ($pdo->inTransaction()) $pdo->rollBack();
             error_log('event_save: ' . $ex->getMessage());
             out(false, 'Could not save the schedule. Please try again.');
         }
@@ -236,6 +265,7 @@ switch ($action) {
         if (!isSec($u) && !($e['kind'] === 'custom' && (int)$e['created_by'] === (int)$u['id'])) out(false, 'You can only delete schedules you added.');
         tx(function () use ($e) {
             q('DELETE FROM attendance WHERE event_id = ?', [$e['id']]);
+            q('DELETE FROM event_committees WHERE event_id = ?', [$e['id']]);
             q('DELETE FROM events WHERE id = ?', [$e['id']]);
         });
         out(true, 'Schedule and its attendance deleted.');
@@ -251,6 +281,7 @@ switch ($action) {
         try {
             $pdo->beginTransaction();
             $da = $pdo->prepare("DELETE FROM attendance WHERE event_id IN ($ph)"); $da->execute($ids);
+            $pdo->prepare("DELETE FROM event_committees WHERE event_id IN ($ph)")->execute($ids);
             $de = $pdo->prepare("DELETE FROM events WHERE id IN ($ph)"); $de->execute($ids);
             $pdo->commit();
         } catch (Throwable $ex) {
@@ -266,7 +297,7 @@ switch ($action) {
     case 'att_get': {
         $u = need(); $e = eventFor($u, $in['event_id'] ?? 0); $w = memberScope($u, $e);
         // Leaders always first, then by committee, then by name
-        $rows = q("SELECT m.id AS member_id, m.full_name, m.ministry, m.scholar_type, m.member_role, c.name AS committee_name, a.status, a.time_in, a.reason
+        $rows = q("SELECT m.id AS member_id, m.full_name, m.ministry, m.scholar_type, m.member_role, m.committee_id, c.name AS committee_name, a.status, a.time_in, a.reason
             FROM members m JOIN committees c ON c.id = m.committee_id
             LEFT JOIN attendance a ON a.member_id = m.id AND a.event_id = ?
             WHERE (m.status = 'active' OR a.id IS NOT NULL)$w ORDER BY (m.member_role = 'leader') DESC, c.sort_order, m.full_name", [$e['id']])->fetchAll();
@@ -404,17 +435,20 @@ switch ($action) {
         if ($sch && count($sch) < 3) $w .= " AND m.scholar_type IN ('" . implode("','", $sch) . "')";
         if (($in['role'] ?? '') === 'leader') $w .= " AND m.member_role = 'leader'";
         $today = date('Y-m-d');
-        $rows = q("SELECT e.id AS event_id, e.title AS event, e.event_date AS date, e.event_time AS time, sc.name AS event_for,
+        $rows = q("SELECT e.id AS event_id, e.title AS event, e.event_date AS date, e.event_time AS time,
             m.id AS member_id, m.full_name AS member, c.name AS committee, m.ministry, m.member_role AS role, m.scholar_type AS scholar,
             COALESCE(a.status, 'pending') AS status, a.time_in, a.reason
             FROM events e
-            JOIN members m ON (e.committee_id IS NULL OR e.committee_id = m.committee_id)
+            JOIN members m ON " . expectedSql() . "
             JOIN committees c ON c.id = m.committee_id
-            LEFT JOIN committees sc ON sc.id = e.committee_id
             LEFT JOIN attendance a ON a.event_id = e.id AND a.member_id = m.id
             WHERE e.event_date BETWEEN ? AND ? AND (m.status = 'active' OR a.id IS NOT NULL)$w
             ORDER BY e.event_date, e.event_time, (m.member_role = 'leader') DESC, c.sort_order, m.full_name", [$from, $to])->fetchAll();
         if (count($rows) > 60000) out(false, 'Too many records. Narrow the date range or committees.');
+        $names = [];
+        foreach (q('SELECT x.event_id, c2.name FROM event_committees x JOIN committees c2 ON c2.id = x.committee_id ORDER BY c2.sort_order')->fetchAll() as $r) $names[(int)$r['event_id']][] = $r['name'];
+        foreach ($rows as &$r) $r['event_for'] = isset($names[(int)$r['event_id']]) ? implode(', ', $names[(int)$r['event_id']]) : null;
+        unset($r);
         out(true, '', $rows);
     }
 
@@ -510,8 +544,9 @@ switch ($action) {
         $ms = $sc ? " WHERE committee_id = $sc" : '';
         $a = q("SELECT COUNT(*) c, COALESCE(MAX(a.marked_at), '') t, COALESCE(SUM(a.status = 'present'), 0) p, COALESCE(SUM(a.status = 'excused'), 0) x FROM attendance a JOIN members m ON m.id = a.member_id$mj")->fetch();
         $m = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(id, '-', full_name, '-', committee_id, '-', member_role, '-', status, '-', scholar_type, '-', COALESCE(ministry, '')))), 0) s FROM members$ms")->fetch();
-        $e = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(id, '-', title, '-', event_date, '-', COALESCE(event_time, ''), '-', COALESCE(end_time, ''), '-', COALESCE(location, ''), '-', COALESCE(committee_id, '')))), 0) s FROM events")->fetch();
-        out(true, '', ['hash' => md5(json_encode([$a, $m, $e]))]);
+        $e = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(id, '-', title, '-', event_date, '-', COALESCE(event_time, ''), '-', COALESCE(end_time, ''), '-', COALESCE(location, '')))), 0) s FROM events")->fetch();
+        $ec = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(event_id, '-', committee_id))), 0) s FROM event_committees")->fetch();
+        out(true, '', ['hash' => md5(json_encode([$a, $m, $e, $ec]))]);
     }
 
     default: out(false, 'Unknown action.');

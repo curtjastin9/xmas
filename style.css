@@ -185,3 +185,9 @@ input[type=checkbox].ck{width:20px;height:20px;min-width:0;min-height:0;flex:non
 .mergebox{margin-top:10px;padding:12px 14px;border:1px solid var(--line);border-radius:10px;background:#FBFBFD}
 .box label.mchk{display:flex;align-items:center;gap:10px;margin-top:10px;font-weight:600;cursor:pointer}
 .box label.mchk input{margin:0;width:20px}
+
+/* merged practice: one location dropdown beside each committee */
+.mrow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px}
+.mrow .mchk{flex:1 1 150px;margin-top:0!important}
+.mrow .mloc{flex:1 1 190px;min-width:0;border:1px solid var(--line2);border-radius:9px;padding:8px 10px;background:#fff;min-height:42px}
+.mrow .mloc:focus{outline:0;border-color:var(--blue);box-shadow:0 0 0 3px rgba(47,78,200,.14)}

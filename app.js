@@ -290,13 +290,13 @@ function eventModal(e, done) {
         <label>Start time<input name="event_time" type="time" value="${esc((e.event_time || '').slice(0, 5))}"></label>
         <label>End time<input name="end_time" type="time" value="${esc((e.end_time || '').slice(0, 5))}"></label>
       </div>
-      <label>Location<select name="location" id="locsel"></select></label>
-      <div class="sub" id="lochint" style="margin-top:6px"></div>
+      <div id="locwrap"><label>Location<select name="location" id="locsel"></select></label>
+      <div class="sub" id="lochint" style="margin-top:6px"></div></div>
       ${isSec() ? `<label>For<select name="scope" id="scope"><option value="all">Everyone – all committees &amp; leaders</option>
         ${COMMITTEES.map(c => `<option value="${c.id}" ${cur.length === 1 && cur[0] === +c.id ? 'selected' : ''}>${esc(c.name)} only</option>`).join('')}
         ${mergeable.length > 1 ? `<option value="merge" ${cur.length > 1 ? 'selected' : ''}>Merged practice – choose committees…</option>` : ''}</select></label>
-        <div id="mergebox" class="mergebox ${cur.length > 1 ? '' : 'hidden'}"><div class="sub">Tick every committee that practises together. Each leader only sees and marks their own committee's members.</div>
-          ${mergeable.map(c => `<label class="mchk"><input type="checkbox" class="ck" name="mc" value="${c.id}" ${cur.includes(+c.id) ? 'checked' : ''}> ${comTag(c.name, c.id)}</label>`).join('')}</div>`
+        <div id="mergebox" class="mergebox ${cur.length > 1 ? '' : 'hidden'}"><div class="sub">Tick every committee that practises together, then choose where each one meets. Each leader only sees and marks their own committee's members.</div>
+          ${mergeable.map(c => `<div class="mrow"><label class="mchk"><input type="checkbox" class="ck" name="mc" value="${c.id}" ${cur.includes(+c.id) ? 'checked' : ''}> ${comTag(c.name, c.id)}</label><select class="mloc ${cur.includes(+c.id) ? '' : 'hidden'}" data-ml="${c.id}" aria-label="Location for ${esc(c.name)}"></select></div>`).join('')}</div>`
         : `<p class="sub" style="margin-top:12px">This schedule is only for <b>${esc(ME.committee_name || 'your committee')}</b>.</p>`}
       <div class="actions"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn pri" id="sv">Save</button></div>
     </form>`, (el, close) => {
@@ -325,7 +325,22 @@ function eventModal(e, done) {
         if (!r.length && isSec()) r = [...new Set(lists.flat())];
         return r;
       };
+      /* merged practice: each ticked committee gets its own location dropdown */
+      const fillMerge = () => {
+        $$('.mrow', el).forEach(row => {
+          const cb = $('input[name=mc]', row), s = $('.mloc', row), id = +cb.value;
+          s.classList.toggle('hidden', !cb.checked);
+          if (!cb.checked) return;
+          const rule = LOCATION_RULES[id], names = (rule && rule.length) ? rule : locs, fixed = names.length === 1;
+          const want = s.options.length ? s.value : ((e.committee_locations || {})[id] || '');
+          s.innerHTML = (fixed ? '' : '<option value="">Choose location…</option>') + names.map(n => `<option>${esc(n)}</option>`).join('');
+          s.value = names.includes(want) ? want : (fixed ? names[0] : '');
+        });
+      };
       const fillLocs = () => {
+        const merge = isSec() && $('#scope', el).value === 'merge';
+        $('#locwrap', el).classList.toggle('hidden', merge); // merged practice: each committee picks its own place
+        if (merge) { fillMerge(); return; }
         const sel = $('#locsel', el), al = allowedFor(curIds());
         const want = sel.options.length ? sel.value : (e.location || '');
         const names = al === null ? locs : al, fixed = !!al && al.length === 1;
@@ -354,6 +369,15 @@ function eventModal(e, done) {
           const sc = body.scope;
           body.committee_ids = sc === 'all' ? [] : sc === 'merge' ? $$('input[name=mc]:checked', ev.target).map(x => +x.value) : [+sc];
           if (sc === 'merge' && body.committee_ids.length < 2) { toast('Tick at least two committees for a merged practice.', true); return; }
+          if (sc === 'merge') {
+            body.committee_locations = {};
+            for (const cid of body.committee_ids) {
+              const v = ($(`.mloc[data-ml="${cid}"]`, ev.target) || {}).value;
+              if (!v) { toast('Choose a location for ' + ((COMMITTEES.find(c => +c.id === cid) || {}).name || 'each committee') + '.', true); return; }
+              body.committee_locations[cid] = v;
+            }
+            body.location = '';
+          }
           delete body.scope; delete body.mc;
         }
         body.id = e.id || 0;

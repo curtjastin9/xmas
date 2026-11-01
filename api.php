@@ -135,8 +135,11 @@ function eventList($u, $extra = '', $params = []) {
     $all = array_sum($cnt);
     $att = [];
     foreach (q("SELECT a.event_id, SUM(a.status = 'present') p, COUNT(*) t FROM attendance a JOIN members m ON m.id = a.member_id WHERE 1=1$ms GROUP BY a.event_id")->fetchAll() as $r) $att[(int)$r['event_id']] = [(int)$r['p'], (int)$r['t']];
-    $links = [];
-    foreach (q('SELECT event_id, committee_id FROM event_committees ORDER BY committee_id')->fetchAll() as $r) $links[(int)$r['event_id']][] = (int)$r['committee_id'];
+    $links = []; $clocs = [];
+    foreach (q('SELECT event_id, committee_id, location FROM event_committees ORDER BY committee_id')->fetchAll() as $r) {
+        $links[(int)$r['event_id']][] = (int)$r['committee_id'];
+        if ($r['location'] !== null && $r['location'] !== '') $clocs[(int)$r['event_id']][(int)$r['committee_id']] = $r['location'];
+    }
     $rows = q("SELECT e.id, e.title, e.event_date, e.event_time, e.end_time, e.location, e.kind, e.created_by, u.full_name AS added_by
         FROM events e LEFT JOIN users u ON u.id = e.created_by
         WHERE 1=1$vis $extra ORDER BY e.event_date, e.event_time", $params)->fetchAll();
@@ -144,6 +147,8 @@ function eventList($u, $extra = '', $params = []) {
         $ids = $links[(int)$r['id']] ?? [];
         $a = $att[(int)$r['id']] ?? [0, 0];
         $r['committee_ids'] = $ids;
+        $r['committee_locations'] = $clocs[(int)$r['id']] ?? new stdClass();
+        if ($sc && !empty($clocs[(int)$r['id']][$sc])) $r['location'] = $clocs[(int)$r['id']][$sc]; // a leader sees their own committee's place
         $r['total'] = $ids ? array_sum(array_map(fn($c) => $cnt[$c] ?? 0, $ids)) : $all;
         $r['present'] = $a[0]; $r['marked'] = $a[1];
         $r['can_edit'] = (isSec($u) || ($r['kind'] === 'custom' && (int)$r['created_by'] === (int)$u['id'])) ? 1 : 0;
@@ -158,6 +163,10 @@ function eventFor($u, $id) {
     $e['committee_ids'] = eventCommittees($e['id']);
     $sc = scope($u);
     if ($sc && $e['committee_ids'] && !in_array($sc, $e['committee_ids'], true)) out(false, 'You do not have access to this event.');
+    $cl = [];
+    foreach (q("SELECT committee_id, location FROM event_committees WHERE event_id = ? AND COALESCE(location, '') <> ''", [(int)$e['id']])->fetchAll() as $r) $cl[(int)$r['committee_id']] = $r['location'];
+    $e['committee_locations'] = $cl ?: new stdClass();
+    if ($sc && isset($cl[$sc])) $e['location'] = $cl[$sc];
     return $e;
 }
 /** SQL fragment limiting members (alias m) to those $u may see for event $e: a leader only ever gets their own committee. */
@@ -183,7 +192,7 @@ function syncLeaders() {
 function ensureSchema($force = false) {
     global $pdo;
     $errs = [];
-    $flag = sys_get_temp_dir() . '/mq_schema_v3';
+    $flag = sys_get_temp_dir() . '/mq_schema_v4';
     if (!$force && is_file($flag)) return $errs;
     $hasTable = fn($t) => (bool)q('SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', [$t])->fetchColumn();
     $hasCol = fn($t, $c) => (bool)q('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?', [$t, $c])->fetchColumn();
@@ -216,6 +225,7 @@ function ensureSchema($force = false) {
         ['events', 'end_time', 'TIME NULL'],
         ['events', 'location', 'VARCHAR(150) NULL'],
         ['events', 'created_by', 'BIGINT NULL'],
+        ['event_committees', 'location', 'VARCHAR(150) NULL'],
         ['members', 'member_role', "VARCHAR(10) NOT NULL DEFAULT 'member'"],
         ['members', 'scholar_type', "VARCHAR(10) NOT NULL DEFAULT 'none'"],
         ['members', 'ministry', 'VARCHAR(100) NULL'],
@@ -345,15 +355,33 @@ switch ($action) {
         } else {
             $cids = [scope($u)]; $kind = 'custom';
         }
-        // committee location rules (Props / Script Writers fixed; Canvas, Lights, Final Dance, Characters choose between two places)
-        $allowed = allowedLocations($cids, locationRules(), isSec($u));
-        if ($allowed !== null) {
-            $oldLoc = $id ? (string)q('SELECT location FROM events WHERE id = ?', [$id])->fetchColumn() : '';
-            if (!$allowed) out(false, 'These committees have no common location. Schedule them separately.');
-            if ($loc === '' && count($allowed) === 1) $loc = $allowed[0];
-            elseif ($loc !== '' && !in_array($loc, $allowed, true) && !($id && $loc === $oldLoc)) out(false, 'For this committee the location can only be: ' . implode(' or ', $allowed) . '.');
+        // location rules: single committee = one place; merged practice = one place per committee
+        $rules = locationRules();
+        $cl = [];
+        if (count($cids) > 1) {
+            $given = is_array($in['committee_locations'] ?? null) ? $in['committee_locations'] : [];
+            $cn = []; foreach (q('SELECT id, name FROM committees')->fetchAll() as $c) $cn[(int)$c['id']] = $c['name'];
+            $parts = [];
+            foreach ($cids as $c) {
+                $l = cut($given[$c] ?? '', 150);
+                $al = $rules[$c] ?? null;
+                if ($al !== null && count($al) === 1 && $l === '') $l = $al[0];
+                if ($l === '') out(false, 'Choose a location for ' . ($cn[$c] ?? 'each committee') . '.');
+                if ($al !== null) { if (!in_array($l, $al, true)) out(false, 'For ' . $cn[$c] . ' the location can only be: ' . implode(' or ', $al) . '.'); }
+                elseif (!q('SELECT 1 FROM locations WHERE name = ?', [$l])->fetchColumn()) out(false, 'Choose a valid location for ' . ($cn[$c] ?? 'a committee') . '.');
+                $cl[$c] = $l; $parts[] = ($cn[$c] ?? $c) . ': ' . $l;
+            }
+            $loc = cut(implode(' · ', $parts), 150);
+        } else {
+            $allowed = allowedLocations($cids, $rules, isSec($u));
+            if ($allowed !== null) {
+                $oldLoc = $id ? (string)q('SELECT location FROM events WHERE id = ?', [$id])->fetchColumn() : '';
+                if (!$allowed) out(false, 'These committees have no common location. Schedule them separately.');
+                if ($loc === '' && count($allowed) === 1) $loc = $allowed[0];
+                elseif ($loc !== '' && !in_array($loc, $allowed, true) && !($id && $loc === $oldLoc)) out(false, 'For this committee the location can only be: ' . implode(' or ', $allowed) . '.');
+            }
         }
-        $link = function ($eid) use ($cids) { foreach ($cids as $c) q('INSERT INTO event_committees (event_id, committee_id) VALUES (?,?)', [$eid, $c]); };
+        $link = function ($eid) use ($cids, $cl) { foreach ($cids as $c) q('INSERT INTO event_committees (event_id, committee_id, location) VALUES (?,?,?)', [$eid, $c, $cl[$c] ?? null]); };
         if ($id) {
             $e = q('SELECT * FROM events WHERE id = ?', [$id])->fetch();
             if (!$e) out(false, 'Event not found.');
@@ -665,7 +693,7 @@ switch ($action) {
         $a = q("SELECT COUNT(*) c, COALESCE(MAX(a.marked_at), '') t, COALESCE(SUM(a.status = 'present'), 0) p, COALESCE(SUM(a.status = 'excused'), 0) x FROM attendance a JOIN members m ON m.id = a.member_id$mj")->fetch();
         $m = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(id, '-', full_name, '-', committee_id, '-', member_role, '-', status, '-', scholar_type, '-', COALESCE(ministry, '')))), 0) s FROM members$ms")->fetch();
         $e = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(id, '-', title, '-', event_date, '-', COALESCE(event_time, ''), '-', COALESCE(end_time, ''), '-', COALESCE(location, '')))), 0) s FROM events")->fetch();
-        $ec = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(event_id, '-', committee_id))), 0) s FROM event_committees")->fetch();
+        $ec = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(event_id, '-', committee_id, '-', COALESCE(location, '')))), 0) s FROM event_committees")->fetch();
         out(true, '', ['hash' => md5(json_encode([$a, $m, $e, $ec]))]);
     }
 

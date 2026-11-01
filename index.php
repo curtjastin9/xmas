@@ -28,5 +28,5 @@ if (empty($_SESSION['uid'])) { header('Location: login.php'); exit; }
   <div id="view"></div>
 </main>
 <div id="toasts" role="status" aria-live="polite"></div>
-<script src="app.js?v=20"></script>
+<script src="app.js?v=21"></script>
 </body></html>

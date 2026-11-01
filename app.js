@@ -26,6 +26,12 @@ const SCHOLAR = { none: 'Not a scholar', shs: 'SHS Scholar', college: 'College S
 const SCHOLAR_SHORT = { none: '—', shs: 'SHS', college: 'College' };
 const STATUS_LABEL = { present: 'Present', absent: 'Absent', excused: 'Excused', pending: 'Not yet modified' };
 const ROLE = { member: 'Member', leader: 'Leader' };
+const MINISTRIES = ['PYM', 'MAS', 'MLM', 'COY', 'LOM', 'TYM'];
+/** <option>s for the ministry dropdown; a older free-typed value stays selectable */
+const ministryOpts = cur => {
+  const v = String(cur || '').trim(), list = v && !MINISTRIES.includes(v) ? [...MINISTRIES, v] : MINISTRIES;
+  return '<option value="">No ministry</option>' + list.map(x => `<option value="${esc(x)}" ${x === v ? 'selected' : ''}>${esc(x)}</option>`).join('');
+};
 
 /** Leader badge (members show nothing in compact views) */
 const roleBadge = r => r === 'leader' ? '<span class="pill lead"><i class="fas fa-star"></i>Leader</span>' : '';
@@ -688,7 +694,7 @@ function memberModal(m, done) {
       ${isSec() ? `<label>Committee<select name="committee_id" required><option value="">Choose…</option>${COMMITTEES.map(c => `<option value="${c.id}" ${+m.committee_id === +c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>`
         : `<p class="sub" style="margin-top:12px">Committee: <b>${esc(ME.committee_name || '')}</b></p>`}
       <label>Role<select name="member_role"><option value="member" ${m.member_role !== 'leader' ? 'selected' : ''}>Member</option><option value="leader" ${m.member_role === 'leader' ? 'selected' : ''}>Leader (always shown on top)</option></select></label>
-      <label>Ministry<input name="ministry" maxlength="100" value="${esc(m.ministry)}" placeholder="e.g. Youth, Choir, Altar servers"></label>
+      <label>Ministry<select name="ministry">${ministryOpts(m.ministry)}</select></label>
       <label>Scholar<select name="scholar_type">${Object.entries(SCHOLAR).map(([k, v]) => `<option value="${k}" ${(m.scholar_type || 'none') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
       <label>Status<select name="status"><option value="active" ${m.status !== 'inactive' ? 'selected' : ''}>Active</option><option value="inactive" ${m.status === 'inactive' ? 'selected' : ''}>Inactive (hidden from attendance)</option></select></label>
       <div class="actions"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn pri">Save</button></div>
@@ -803,7 +809,7 @@ function insertModal(done) {
       const draw = focusLast => {
         $('#irows', el).innerHTML = rows.map((r, i) => `<div class="irow" data-i="${i}">
           <input class="nm" data-f="n" maxlength="100" placeholder="Full name" value="${esc(r.n)}" aria-label="Full name">
-          <input data-f="m" maxlength="100" placeholder="e.g. Youth, Choir" value="${esc(r.m)}" aria-label="Ministry">
+          <select data-f="m" aria-label="Ministry">${ministryOpts(r.m)}</select>
           <select data-f="r" aria-label="Role">${Object.entries(ROLE).map(([k, v]) => `<option value="${k}" ${r.r === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
           <select data-f="s" aria-label="Scholar">${Object.entries(SCHOLAR).map(([k, v]) => `<option value="${k}" ${r.s === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
           <button type="button" class="btn sm no rm" data-rm="${i}" aria-label="Remove row">✕</button></div>`).join('');

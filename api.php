@@ -59,6 +59,9 @@ function committeeByName($name) {
         $map['dance'] = $map['finaldance'] ?? null;
         $map['character'] = $map['characters'] ?? null;
         $map['prop'] = $map['props'] ?? null;
+        $map['script'] = $map['scriptwriter'] ?? null;
+        $map['scripts'] = $map['scriptwriter'] ?? null;
+        $map['scriptwriters'] = $map['scriptwriter'] ?? null;
     }
     return $map[norm($name)] ?? null;
 }

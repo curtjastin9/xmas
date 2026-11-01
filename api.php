@@ -123,6 +123,7 @@ function eventList($u, $extra = '', $params = []) {
         $r['present'] = $a[0]; $r['marked'] = $a[1];
         $r['can_edit'] = (isSec($u) || ($r['kind'] === 'custom' && (int)$r['created_by'] === (int)$u['id'])) ? 1 : 0;
     }
+    unset($r);
     return $rows;
 }
 function eventFor($u, $id) {
@@ -153,6 +154,48 @@ function syncLeaders() {
     }
 }
 
+/** Creates anything the app needs that the database lacks. Additive only; runs once per server instance. */
+function ensureSchema() {
+    global $pdo;
+    $flag = sys_get_temp_dir() . '/mq_schema_v2';
+    if (is_file($flag)) return;
+    $hasTable = fn($t) => (bool)q('SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', [$t])->fetchColumn();
+    $hasCol = fn($t, $c) => (bool)q('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?', [$t, $c])->fetchColumn();
+    $run = function ($sql) use ($pdo) { try { $pdo->exec($sql); } catch (Throwable $e) { error_log('schema: ' . $e->getMessage() . ' :: ' . $sql); } };
+
+    $freshLinks = !$hasTable('event_committees');
+    $run("CREATE TABLE IF NOT EXISTS event_committees (event_id BIGINT NOT NULL, committee_id BIGINT NOT NULL, PRIMARY KEY (event_id, committee_id))");
+    $run("CREATE TABLE IF NOT EXISTS locations (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100) NOT NULL, sort_order INT NOT NULL DEFAULT 0)");
+    $run("CREATE TABLE IF NOT EXISTS settings (k VARCHAR(50) NOT NULL PRIMARY KEY, v VARCHAR(255) NOT NULL)");
+    $run("CREATE TABLE IF NOT EXISTS rate_limits (id INT AUTO_INCREMENT PRIMARY KEY, rkey VARCHAR(150) NOT NULL, hit_at INT NOT NULL, KEY k1 (rkey, hit_at))");
+
+    // old single-committee column -> new link table
+    if ($hasCol('events', 'committee_id')) {
+        if ($freshLinks) $run('INSERT IGNORE INTO event_committees (event_id, committee_id) SELECT id, committee_id FROM events WHERE committee_id IS NOT NULL AND committee_id > 0');
+        $run('ALTER TABLE events MODIFY committee_id INT NULL');
+    }
+    foreach ([
+        ['committees', 'can_merge', 'TINYINT NOT NULL DEFAULT 0'],
+        ['events', 'kind', "VARCHAR(10) NOT NULL DEFAULT 'fixed'"],
+        ['events', 'end_time', 'TIME NULL'],
+        ['events', 'location', 'VARCHAR(150) NULL'],
+        ['events', 'created_by', 'BIGINT NULL'],
+        ['members', 'member_role', "VARCHAR(10) NOT NULL DEFAULT 'member'"],
+        ['members', 'scholar_type', "VARCHAR(10) NOT NULL DEFAULT 'none'"],
+        ['members', 'ministry', 'VARCHAR(100) NULL'],
+        ['attendance', 'time_in', 'TIME NULL'],
+        ['attendance', 'reason', 'VARCHAR(255) NULL'],
+        ['attendance', 'marked_by', 'BIGINT NULL'],
+        ['attendance', 'marked_at', 'DATETIME NULL'],
+    ] as [$t, $c, $ddl]) if (!$hasCol($t, $c)) $run("ALTER TABLE `$t` ADD COLUMN `$c` $ddl");
+
+    // att_save relies on this unique key (ON DUPLICATE KEY UPDATE); without it, saving twice creates duplicate rows
+    if (!q("SELECT 1 FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance' AND NON_UNIQUE = 0 AND COLUMN_NAME = 'event_id' LIMIT 1")->fetchColumn())
+        $run('ALTER TABLE attendance ADD UNIQUE KEY uq_att (member_id, event_id)');
+    @file_put_contents($flag, '1');
+}
+try { ensureSchema(); } catch (Throwable $e) { error_log('ensureSchema: ' . $e->getMessage()); }
+
 if ($action === 'ping') { q('SELECT 1'); out(true, 'ok'); }
 if ($action !== 'login') need();
 
@@ -174,6 +217,7 @@ switch ($action) {
         if ($r['status'] !== 'active') out(false, 'This account is disabled. Ask the Secretariat.');
         if ($n) q('DELETE FROM rate_limits WHERE rkey = ?', [$key]);
         set_login((int)$r['id'], $r['password']);
+        if ($r['role'] === 'secretariat') { try { syncLeaders(); } catch (Throwable $e) { error_log('syncLeaders: ' . $e->getMessage()); } }
         $lu = ['id' => $r['id'], 'username' => $r['username'], 'full_name' => $r['full_name'], 'role' => $r['role'], 'committee_id' => $r['committee_id'], 'status' => $r['status']];
         out(true, 'Welcome!', meData($lu));
     }
@@ -191,13 +235,15 @@ switch ($action) {
         $upcoming = array_slice(array_values(array_filter($evs, fn($e) => $e['event_date'] > $today)), 0, 6);
         $mw = $sc ? " AND m.committee_id = $sc" : '';
         $rate = [];
-        foreach (q("SELECT m.committee_id cid, SUM(a.status = 'present') p, SUM(a.id IS NOT NULL) t FROM events e
-            JOIN members m ON m.status = 'active' AND " . expectedSql() . "$mw
+        foreach (q("SELECT m.committee_id cid, SUM(a.status = 'present') p, SUM(a.id IS NOT NULL) t
+            FROM events e CROSS JOIN members m
             LEFT JOIN attendance a ON a.event_id = e.id AND a.member_id = m.id
-            WHERE e.event_date <= ? GROUP BY m.committee_id", [$today])->fetchAll() as $r) $rate[$r['cid']] = [(int)$r['p'], (int)$r['t']];
+            WHERE m.status = 'active' AND " . expectedSql() . "$mw AND e.event_date <= ?
+            GROUP BY m.committee_id", [$today])->fetchAll() as $r) $rate[$r['cid']] = [(int)$r['p'], (int)$r['t']];
         $cw = $sc ? "WHERE c.id = $sc" : '';
         $coms = q("SELECT c.id, c.name, c.color, (SELECT COUNT(*) FROM members m WHERE m.committee_id = c.id AND m.status = 'active') AS members FROM committees c $cw ORDER BY c.sort_order")->fetchAll();
-        foreach ($coms as &$c) { $r = $rate[$c['id']] ?? [0, 0]; $c['rate'] = $r[1] ? round($r[0] / $r[1] * 100) : null; }
+        foreach ($coms as &$c) { $rt = $rate[$c['id']] ?? [0, 0]; $c['rate'] = $rt[1] ? round($rt[0] / $rt[1] * 100) : null; }
+        unset($c);
         out(true, '', ['members' => $members, 'today' => $todayEv, 'present_today' => array_sum(array_column($todayEv, 'present')), 'upcoming' => $upcoming, 'committees' => $coms]);
     }
 
@@ -434,15 +480,14 @@ switch ($action) {
         $sch = array_values(array_intersect(['none', 'shs', 'college'], array_map('strval', (array)($in['scholar_types'] ?? []))));
         if ($sch && count($sch) < 3) $w .= " AND m.scholar_type IN ('" . implode("','", $sch) . "')";
         if (($in['role'] ?? '') === 'leader') $w .= " AND m.member_role = 'leader'";
-        $today = date('Y-m-d');
         $rows = q("SELECT e.id AS event_id, e.title AS event, e.event_date AS date, e.event_time AS time,
             m.id AS member_id, m.full_name AS member, c.name AS committee, m.ministry, m.member_role AS role, m.scholar_type AS scholar,
             COALESCE(a.status, 'pending') AS status, a.time_in, a.reason
             FROM events e
-            JOIN members m ON " . expectedSql() . "
+            CROSS JOIN members m
             JOIN committees c ON c.id = m.committee_id
             LEFT JOIN attendance a ON a.event_id = e.id AND a.member_id = m.id
-            WHERE e.event_date BETWEEN ? AND ? AND (m.status = 'active' OR a.id IS NOT NULL)$w
+            WHERE " . expectedSql() . " AND e.event_date BETWEEN ? AND ? AND (m.status = 'active' OR a.id IS NOT NULL)$w
             ORDER BY e.event_date, e.event_time, (m.member_role = 'leader') DESC, c.sort_order, m.full_name", [$from, $to])->fetchAll();
         if (count($rows) > 60000) out(false, 'Too many records. Narrow the date range or committees.');
         $names = [];
@@ -478,7 +523,9 @@ switch ($action) {
             if ($id === (int)$me['id'] && ($st === 'disabled' || $role !== 'secretariat')) out(false, 'You cannot disable or demote your own account.');
             if ($pw !== '') {
                 if (strlen($pw) < 6) out(false, 'Password must be at least 6 characters.');
-                q('UPDATE users SET full_name=?, username=?, role=?, committee_id=?, status=?, password=? WHERE id=?', [$name, $un, $role, $cid, $st, password_hash($pw, PASSWORD_BCRYPT), $id]);
+                $nh = password_hash($pw, PASSWORD_BCRYPT);
+                q('UPDATE users SET full_name=?, username=?, role=?, committee_id=?, status=?, password=? WHERE id=?', [$name, $un, $role, $cid, $st, $nh, $id]);
+                if ($id === (int)$me['id']) set_login($id, $nh); // keep your own device signed in after changing your own password
             } else {
                 q('UPDATE users SET full_name=?, username=?, role=?, committee_id=?, status=? WHERE id=?', [$name, $un, $role, $cid, $st, $id]);
             }

@@ -50,6 +50,8 @@ function toast(msg, err) {
   setTimeout(() => t.remove(), err ? 6000 : 3500);
 }
 
+let lastErr = ''; // last server/network error message, shown if a page fails to load
+
 /** POST to api.php. Returns the parsed response; redirects to login if the session ended. */
 async function api(action, body) {
   let r;
@@ -57,6 +59,7 @@ async function api(action, body) {
     const res = await fetch('api.php?action=' + action, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
     r = await res.json();
   } catch (e) {
+    lastErr = 'Network or server error. Check your connection and try again.';
     toast('Network error. Check your connection and try again.', true);
     return { success: false, message: 'Network error.' };
   }
@@ -66,7 +69,7 @@ async function api(action, body) {
 /** api() that toasts failures and returns data (or null). */
 async function call(action, body, okToast) {
   const r = await api(action, body);
-  if (!r.success) { if (r.code !== 'auth') toast(r.message || 'Something went wrong.', true); return null; }
+  if (!r.success) { lastErr = r.message || ''; if (r.code !== 'auth') toast(r.message || 'Something went wrong.', true); return null; }
   if (okToast && r.message) toast(r.message);
   return r.data === null || r.data === undefined ? true : r.data;
 }
@@ -198,14 +201,19 @@ async function route() {
     history.replaceState(null, '', document.body.dataset.hash || '#/attendance'); return;
   }
   leaveGuard = null;
-  routeTok++; liveRefresh = null; pickUI = {};
+  routeTok++; const rt = routeTok; liveRefresh = null; pickUI = {}; lastErr = '';
   document.body.dataset.hash = location.hash;
   $$('#nav button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
   $('#title').textContent = NAV[v][1];
   document.title = NAV[v][1] + ' · Christmas Presentation';
   window.scrollTo(0, 0);
   loading();
-  try { await VIEWS[v](arg); } catch (e) { console.error(e); view().innerHTML = '<div class="empty">Could not load this page. Please refresh.</div>'; }
+  try {
+    await VIEWS[v](arg);
+    // a page that failed to fetch its data leaves "Loading…" behind: show the reason instead of hanging
+    if (rt === routeTok && view().textContent.trim() === 'Loading…')
+      view().innerHTML = '<div class="empty">Could not load this page.' + (lastErr ? '<br><small>' + esc(lastErr) + '</small>' : '') + '<br><br><button class="btn sm" onclick="location.reload()">Try again</button></div>';
+  } catch (e) { console.error(e); view().innerHTML = '<div class="empty">Could not load this page. Please refresh.</div>'; }
 }
 
 /* ---------- shared event row ---------- */

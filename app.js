@@ -771,46 +771,45 @@ function importModal(done) {
     });
 }
 
-/** Turn pasted/uploaded rows into [{n, m, s, r}] for the Insert members popup. Columns: Full name, Ministry, Scholar, Role */
+/** Turn pasted/uploaded rows (straight from Excel) into [{n, m, s, r}]. Columns: Full name, Ministry, Scholar. Role is always member. */
 function parseMemberRows(matrix) {
   matrix = matrix.filter(r => r.some(c => String(c ?? '').trim() !== ''));
   if (!matrix.length) return [];
   const NAMES = ['name', 'fullname', 'membername', 'names'];
-  let ni = 0, mi = 1, si = 2, ri = 3, start = 0;
+  let ni = 0, mi = 1, si = 2, start = 0;
   const h = matrix[0].map(norm);
   if (h.some(k => NAMES.includes(k))) {
-    start = 1; ri = -1;
-    h.forEach((k, i) => { if (NAMES.includes(k)) ni = i; else if (k.startsWith('ministr')) mi = i; else if (k.startsWith('scholar')) si = i; else if (k === 'role' || k === 'position') ri = i; });
+    start = 1; mi = -1; si = -1;
+    h.forEach((k, i) => { if (NAMES.includes(k)) ni = i; else if (k.startsWith('ministr')) mi = i; else if (k.startsWith('scholar')) si = i; });
   }
   const sk = v => { const s = norm(v); return (s.startsWith('shs') || s.includes('seniorhigh')) ? 'shs' : s.includes('college') ? 'college' : 'none'; };
-  const rk = v => { const s = norm(v); return (s.includes('lead') || s.includes('head')) ? 'leader' : 'member'; };
-  return matrix.slice(start).map(r => ({ n: String(r[ni] ?? '').trim(), m: String(r[mi] ?? '').trim(), s: sk(r[si]), r: ri >= 0 ? rk(r[ri]) : 'member' })).filter(r => r.n);
+  const mn = v => { const t = String(v ?? '').trim(); return MINISTRIES.find(x => norm(x) === norm(t)) || t; };
+  return matrix.slice(start).map(r => ({ n: String(r[ni] ?? '').trim(), m: mi >= 0 ? mn(r[mi]) : '', s: si >= 0 ? sk(r[si]) : 'none', r: 'member' })).filter(r => r.n);
 }
 
 function insertModal(done) {
   const blank = () => ({ n: '', m: '', s: 'none', r: 'member' });
   let rows = [blank(), blank(), blank()];
   modal(`<h3>Insert members</h3>
-    <p class="sub">${isSec() ? 'Pick the committee, then add the members.' : 'They will be added to <b>' + esc(ME.committee_name || 'your committee') + '</b>.'} Status is set to <b>Active</b> automatically.</p>
+    <p class="sub">${isSec() ? 'Pick the committee, then add the members.' : 'They will be added to <b>' + esc(ME.committee_name || 'your committee') + '</b>.'} Role is set to <b>Member</b> and status to <b>Active</b> automatically.</p>
     ${isSec() ? `<label>Committee<select id="icom"><option value="">Choose…</option>${COMMITTEES.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>` : ''}
-    <div class="irow ihead"><span>Full name</span><span>Ministry</span><span>Role</span><span>Scholar</span><span></span></div>
+    <div class="irow r3 ihead"><span>Full name</span><span>Ministry</span><span>Scholar</span><span></span></div>
     <div id="irows"></div>
     <div class="bar" style="margin:10px 0 0">
       <button type="button" class="btn sm" id="iadd"><i class="fas fa-plus"></i> Add row</button>
       <button type="button" class="btn sm" id="ifile"><i class="fas fa-file-excel"></i> Upload Excel / CSV</button>
       <button type="button" class="btn sm ghost" id="itpl"><i class="fas fa-download"></i> Template</button>
       <input type="file" id="ifl" class="hidden" accept=".xlsx,.xls,.csv"></div>
-    <label>Or paste rows copied from Excel <span class="muted">(Full name, Ministry, Scholar, Role)</span>
+    <label>Or paste rows copied from Excel <span class="muted">(Full name, Ministry, Scholar)</span>
       <textarea id="ipaste" style="min-height:70px" placeholder="Tap here and paste"></textarea></label>
     <div class="msg" id="ipv" style="color:var(--soft);min-height:20px"></div>
     <div class="actions"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn pri" id="isave"><i class="fas fa-floppy-disk"></i> <span id="ilabel">Save members</span></button></div>`,
     (el, close) => {
       $('.box', el).style.maxWidth = '860px';
       const draw = focusLast => {
-        $('#irows', el).innerHTML = rows.map((r, i) => `<div class="irow" data-i="${i}">
+        $('#irows', el).innerHTML = rows.map((r, i) => `<div class="irow r3" data-i="${i}">
           <input class="nm" data-f="n" maxlength="100" placeholder="Full name" value="${esc(r.n)}" aria-label="Full name">
           <select data-f="m" aria-label="Ministry">${ministryOpts(r.m)}</select>
-          <select data-f="r" aria-label="Role">${Object.entries(ROLE).map(([k, v]) => `<option value="${k}" ${r.r === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
           <select data-f="s" aria-label="Scholar">${Object.entries(SCHOLAR).map(([k, v]) => `<option value="${k}" ${r.s === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
           <button type="button" class="btn sm no rm" data-rm="${i}" aria-label="Remove row">✕</button></div>`).join('');
         count();
@@ -841,6 +840,13 @@ function insertModal(done) {
         const row = e.target.closest('.irow'), i = +row.dataset.i;
         if (i === rows.length - 1) { rows.push(blank()); draw(true); } else $$('#irows .nm', el)[i + 1].focus();
       });
+      $('#irows', el).addEventListener('paste', e => { // paste rows copied from Excel straight into any cell
+        const txt = ((e.clipboardData || window.clipboardData).getData('text') || '').trim();
+        if (!/[\t\n]/.test(txt)) return; // a single value: normal paste
+        e.preventDefault();
+        const list = parseMemberRows(parseText(txt));
+        if (list.length) addRows(list); else toast('Nothing to add from that paste.', true);
+      });
       $('#ipaste', el).addEventListener('paste', e => {
         const txt = (e.clipboardData || window.clipboardData).getData('text');
         e.preventDefault();
@@ -860,9 +866,9 @@ function insertModal(done) {
         } catch (x) { toast('Could not read that file.', true); }
         e.target.value = '';
       });
-      $('#itpl', el).onclick = () => exportRows('xlsx', 'members-template', ['Full name', 'Ministry', 'Scholar', 'Role'], [['Juan Dela Cruz', 'Youth', 'College', 'Leader'], ['Maria Santos', 'Choir', 'SHS', 'Member'], ['Pedro Reyes', 'Altar servers', 'None', 'Member']]);
+      $('#itpl', el).onclick = () => exportRows('xlsx', 'members-template', ['Full name', 'Ministry', 'Scholar'], [['Juan Dela Cruz', 'PYM', 'College'], ['Maria Santos', 'MAS', 'SHS'], ['Pedro Reyes', 'COY', 'None']]);
       $('#isave', el).onclick = async e => {
-        const list = rows.filter(r => r.n.trim()).map(r => ({ full_name: r.n.trim(), ministry: r.m.trim(), scholar: r.s, role: r.r }));
+        const list = rows.filter(r => r.n.trim()).map(r => ({ full_name: r.n.trim(), ministry: r.m.trim(), scholar: r.s, role: 'member' }));
         if (!list.length) { toast('Type at least one full name.', true); return; }
         const body = { rows: list };
         if (isSec()) { body.committee_id = +$('#icom', el).value; if (!body.committee_id) { toast('Choose a committee first.', true); return; } }

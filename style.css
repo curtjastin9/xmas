@@ -191,3 +191,7 @@ input[type=checkbox].ck{width:20px;height:20px;min-width:0;min-height:0;flex:non
 .mrow .mchk{flex:1 1 150px;margin-top:0!important}
 .mrow .mloc{flex:1 1 190px;min-width:0;border:1px solid var(--line2);border-radius:9px;padding:8px 10px;background:#fff;min-height:42px}
 .mrow .mloc:focus{outline:0;border-color:var(--blue);box-shadow:0 0 0 3px rgba(47,78,200,.14)}
+
+/* insert members: Full name | Ministry | Scholar | remove (role is always Member) */
+.irow.r3{grid-template-columns:1.7fr 1.1fr 1.2fr 42px}
+@media(max-width:640px){.irow.r3{grid-template-columns:1fr 1fr}.irow.r3 .nm,.irow.r3 .rm{grid-column:1/-1}}

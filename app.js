@@ -977,7 +977,9 @@ VIEWS.settings = async () => {
   if (cached) { apply(cached); start(); }
   const r = await fresh;
   if (!r.success) { sessionStorage.removeItem('me'); if (r.code !== 'auth') location.href = 'login.php'; return; }
+  const changed = cached && JSON.stringify(cached) !== JSON.stringify(r.data);
   sessionStorage.setItem('me', JSON.stringify(r.data));
   if (!cached) { apply(r.data); start(); }
+  else if (changed) { apply(r.data); route(); } // committees/user changed on the server: refresh the list and redraw
 })();
 })();

@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "functions": {
+    "api/*.php": { "runtime": "vercel-php@0.7.4" }
+  },
+  "routes": [
+    { "src": "/api/session\\.php", "status": 404 },
+    { "src": "/api\\.php", "dest": "/api/api.php" },
+    { "src": "/login\\.php", "dest": "/api/login.php" },
+    { "src": "/index\\.php", "dest": "/api/index.php" },
+    { "handle": "filesystem" },
+    { "src": "/", "dest": "/api/index.php" }
+  ]
+}

@@ -22,8 +22,8 @@ const fmtTime = t => {
   return ((h % 12) || 12) + ':' + String(m).padStart(2, '0') + ' ' + (h >= 12 ? 'PM' : 'AM');
 };
 const timeRange = e => e.event_time ? fmtTime(e.event_time) + (e.end_time ? ' – ' + fmtTime(e.end_time) : '') : '';
-const SCHOLAR = { none: 'Not a scholar', shs: 'SHS Scholar', college: 'College Scholar' };
-const SCHOLAR_SHORT = { none: '—', shs: 'SHS', college: 'College' };
+const SCHOLAR = { none: 'NON-SCHOLAR', shs: 'SHS-SCHOLAR', college: 'COLLEGE-SCHOLAR' };
+const SCHOLAR_SHORT = SCHOLAR;
 const STATUS_LABEL = { present: 'Present', absent: 'Absent', excused: 'Excused', pending: 'Not yet modified' };
 const ROLE = { member: 'Member', leader: 'Leader' };
 const MINISTRIES = ['PYM', 'MAS', 'MLM', 'COY', 'LOM', 'TYM'];
@@ -611,7 +611,7 @@ async function takeAttendance(id) {
   const rowHtml = m => {
     const s = state.get(+m.member_id);
     return `<div class="arow${isLead(m) ? ' isl' : ''}" data-m="${m.member_id}">
-      <div class="who2"><b>${esc(m.full_name)}</b>${roleBadge(m.member_role)}<br><small>${comTag(m.committee_name)} · ${esc(m.ministry || 'No ministry')}${m.scholar_type !== 'none' ? ' · <span class="pill">' + esc(SCHOLAR_SHORT[m.scholar_type]) + ' scholar</span>' : ''}</small></div>
+      <div class="who2"><b>${esc(m.full_name)}</b>${roleBadge(m.member_role)}<br><small>${comTag(m.committee_name)} · ${esc(m.ministry || 'No ministry')}${m.scholar_type !== 'none' ? ' · <span class="pill">' + esc(SCHOLAR[m.scholar_type]) + '</span>' : ''}</small></div>
       <div class="ctl"><div class="seg">${['present', 'absent', 'excused'].map(v => `<button type="button" data-v="${v}" class="${s.status === v ? 'on' : ''}">${STATUS_LABEL[v]}</button>`).join('')}</div>
         <label class="tin ${s.status === 'present' ? '' : 'hidden'}">In <input type="time" class="ti" value="${esc(s.time_in)}"></label></div>
       <input class="reason ${s.status === 'excused' ? '' : 'hidden'}" maxlength="255" placeholder="Reason for excuse (required)" value="${esc(s.reason)}"></div>`;
@@ -746,7 +746,7 @@ function parseText(txt) {
 function importModal(done) {
   let rows = [];
   modal(`<h3>Import members</h3>
-    <p class="sub">Columns: <b>Name, Committee, Ministry, Scholar, Role</b>. Committee must be one of: ${COMMITTEES.map(c => esc(c.name)).join(', ')}. Scholar is <i>None</i>, <i>SHS</i> or <i>College</i>. Role is <i>Leader</i> or <i>Member</i> (blank = Member).</p>
+    <p class="sub">Columns: <b>Name, Committee, Ministry, Scholar, Role</b>. Committee must be one of: ${COMMITTEES.map(c => esc(c.name)).join(', ')}. Scholar is <i>SHS-SCHOLAR</i>, <i>COLLEGE-SCHOLAR</i> or <i>NON-SCHOLAR</i> (SHS, College and None also work). Role is <i>Leader</i> or <i>Member</i> (blank = Member).</p>
     <label>Excel / CSV file<input type="file" id="file" accept=".xlsx,.xls,.csv"></label>
     <label>…or paste rows (copy straight from Excel)<textarea id="paste" placeholder="Juan Dela Cruz&#9;Props&#9;Youth&#9;College&#9;Leader"></textarea></label>
     <div class="msg" id="pv" style="color:var(--soft)"></div>
@@ -888,7 +888,7 @@ VIEWS.members = async () => {
     <div class="bar"><input id="q" type="search" placeholder="Search name, ministry or committee…" aria-label="Search">
       ${isSec() ? `<select id="cf" aria-label="Committee"><option value="">All committees</option>${COMMITTEES.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select>` : ''}
       <select id="rf" aria-label="Role"><option value="">All roles</option><option value="leader">Leaders</option><option value="member">Members</option></select>
-      <select id="sf" aria-label="Scholar"><option value="">All scholars</option><option value="none">Not a scholar</option><option value="shs">SHS Scholar</option><option value="college">College Scholar</option></select>
+      <select id="sf" aria-label="Scholar"><option value="">All scholars</option><option value="none">NON-SCHOLAR</option><option value="shs">SHS-SCHOLAR</option><option value="college">COLLEGE-SCHOLAR</option></select>
       <select id="st" aria-label="Status"><option value="active">Active</option><option value="inactive">Inactive</option><option value="">All</option></select></div>
     <div id="tb"></div></div>`;
   const draw = () => {
@@ -932,7 +932,7 @@ VIEWS.records = async () => {
   view().innerHTML = `<div class="card"><div class="head"><div><h3>Attendance records</h3><div class="sub">Every schedule in the date range. Anyone not marked Present, Excused or Absent shows as Not yet modified.</div></div></div>
     <div class="bar"><label class="fl">From<input type="date" id="from" value="${clampDay(todayStr())}" min="${SEASON_START}" max="${SEASON_END}"></label><label class="fl">To<input type="date" id="to" value="${SEASON_END}" min="${SEASON_START}" max="${SEASON_END}"></label></div>
     ${isSec() ? `<div class="sub">Committees</div><div class="chips" id="cc">${COMMITTEES.map(c => `<button class="chip" data-c="${c.id}">${esc(c.name)}</button>`).join('')}</div>` : ''}
-    <div class="sub">Scholar type</div><div class="chips" id="sc"><button class="chip" data-s="none">Not a scholar</button><button class="chip" data-s="shs">SHS</button><button class="chip" data-s="college">College</button></div>
+    <div class="sub">Scholar type</div><div class="chips" id="sc"><button class="chip" data-s="none">NON-SCHOLAR</button><button class="chip" data-s="shs">SHS-SCHOLAR</button><button class="chip" data-s="college">COLLEGE-SCHOLAR</button></div>
     <div class="sub">Role</div><div class="chips" id="rc"><button class="chip" data-r="leader"><i class="fas fa-star"></i> Leaders only</button></div>
     <button class="btn pri" id="run"><i class="fas fa-magnifying-glass"></i> Show records</button></div>
     <div id="out"></div>`;

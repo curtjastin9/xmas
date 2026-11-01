@@ -28,6 +28,5 @@ if (empty($_SESSION['uid'])) { header('Location: login.php'); exit; }
   <div id="view"></div>
 </main>
 <div id="toasts" role="status" aria-live="polite"></div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body></html>

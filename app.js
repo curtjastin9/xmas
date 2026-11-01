@@ -115,7 +115,13 @@ function download(name, blob) {
   document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
 }
-function exportRows(kind, name, head, rows, extra = []) {
+const loadXLSX = () => window.XLSX ? Promise.resolve() : new Promise((res, rej) => {
+  const sc = document.createElement('script');
+  sc.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+  sc.onload = res; sc.onerror = rej; document.head.appendChild(sc);
+});
+async function exportRows(kind, name, head, rows, extra = []) {
+  if (kind === 'xlsx') { try { await loadXLSX(); } catch (e) {} }
   if (kind === 'xlsx' && window.XLSX) {
     const safe = rows.map(r => r.map(v => (typeof v === 'string' && /^[=+\-@]/.test(v)) ? "'" + v : v));
     const ws = XLSX.utils.aoa_to_sheet([head, ...safe, ...extra]);
@@ -174,7 +180,7 @@ async function pulse() {
   const fn = liveRefresh;
   try { if ((await fn()) === false) lastPulse = prev; } catch (e) { console.error(e); lastPulse = prev; }
 }
-setInterval(pulse, 5000);
+setInterval(pulse, 15000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) pulse(); });
 addEventListener('online', pulse);
 
@@ -630,6 +636,7 @@ function importModal(done) {
       $('#file', el).addEventListener('change', async e => {
         const f = e.target.files[0]; if (!f) return;
         try {
+          await loadXLSX().catch(() => {});
           if (/\.csv$/i.test(f.name)) set(sheetToRows(parseText(await f.text())));
           else if (window.XLSX) { const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' }); set(sheetToRows(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' }))); }
           else toast('Excel reader did not load. Save as CSV or paste the rows.', true);
@@ -723,6 +730,7 @@ function insertModal(done) {
       $('#ifl', el).addEventListener('change', async e => {
         const f = e.target.files[0]; if (!f) return;
         try {
+          await loadXLSX().catch(() => {});
           let list;
           if (/\.csv$/i.test(f.name)) list = parseMemberRows(parseText(await f.text()));
           else if (window.XLSX) { const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' }); list = parseMemberRows(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' })); }
@@ -949,17 +957,27 @@ VIEWS.settings = async () => {
 
 /* ---------- boot ---------- */
 (async function init() {
-  const r = await api('me');
-  if (!r.success) { if (r.code !== 'auth') location.href = 'login.php'; return; }
-  ME = r.data.user; COMMITTEES = r.data.committees;
-  $('#whoName').textContent = ME.full_name;
-  $('#hchip').innerHTML = `<i class="av" style="font-style:normal">${esc(ME.full_name.trim().charAt(0).toUpperCase())}</i><span><b>${esc(ME.full_name)}</b><small>${isSec() ? 'Secretariat' : 'Leader · ' + esc(ME.committee_name || '—')}</small></span>`;
-  $('#whoRole').textContent = isSec() ? 'Secretariat' : 'Leader · ' + (ME.committee_name || 'no committee');
-  buildNav();
-  $('#burger').onclick = () => { $('#side').classList.add('open'); $('#shade').classList.add('open'); };
-  $('#shade').onclick = closeSide;
-  $('#logout').onclick = async () => { await api('logout'); location.href = 'login.php'; };
-  window.addEventListener('hashchange', route);
-  route();
+  let cached = null;
+  try { cached = JSON.parse(sessionStorage.getItem('me')); } catch (e) {}
+  const apply = d => {
+    ME = d.user; COMMITTEES = d.committees;
+    $('#whoName').textContent = ME.full_name;
+    $('#hchip').innerHTML = `<i class="av" style="font-style:normal">${esc(ME.full_name.trim().charAt(0).toUpperCase())}</i><span><b>${esc(ME.full_name)}</b><small>${isSec() ? 'Secretariat' : 'Leader · ' + esc(ME.committee_name || '—')}</small></span>`;
+    $('#whoRole').textContent = isSec() ? 'Secretariat' : 'Leader · ' + (ME.committee_name || 'no committee');
+  };
+  const start = () => {
+    buildNav();
+    $('#burger').onclick = () => { $('#side').classList.add('open'); $('#shade').classList.add('open'); };
+    $('#shade').onclick = closeSide;
+    $('#logout').onclick = async () => { sessionStorage.removeItem('me'); await api('logout'); location.href = 'login.php'; };
+    window.addEventListener('hashchange', route);
+    route();
+  };
+  const fresh = api('me');
+  if (cached) { apply(cached); start(); }
+  const r = await fresh;
+  if (!r.success) { sessionStorage.removeItem('me'); if (r.code !== 'auth') location.href = 'login.php'; return; }
+  sessionStorage.setItem('me', JSON.stringify(r.data));
+  if (!cached) { apply(r.data); start(); }
 })();
 })();

@@ -98,7 +98,7 @@ f.addEventListener('submit', async e => {
   go.disabled = true; go.textContent = 'Logging in…'; msg.textContent = '';
   try {
     const r = await (await fetch('api.php?action=login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(f))) })).json();
-    if (r.success) { go.textContent = 'Welcome!'; location.href = 'index.php'; return; }
+    if (r.success) { go.textContent = 'Welcome!'; sessionStorage.removeItem('me'); location.href = 'index.php'; return; }
     msg.textContent = r.message;
   } catch (x) { msg.textContent = 'Network error. Check your connection.'; }
   go.disabled = false; go.textContent = 'Log in';

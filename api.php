@@ -15,11 +15,7 @@ if (!is_array($in)) $in = [];
 
 function q($sql, $p = []) { global $pdo; $s = $pdo->prepare($sql); $s->execute($p); return $s; }
 
-/* Self-heal: add members.member_role if the database doesn't have it yet (no manual SQL needed). */
-try {
-    $hasRole = (int)q("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'members' AND COLUMN_NAME = 'member_role'")->fetchColumn();
-    if (!$hasRole) $pdo->exec("ALTER TABLE members ADD COLUMN member_role ENUM('member','leader') NOT NULL DEFAULT 'member' AFTER ministry");
-} catch (Throwable $e) { error_log('member_role migration: ' . $e->getMessage()); }
+
 function user() {
     static $u = false;
     if ($u !== false) return $u;
@@ -72,13 +68,20 @@ function eventList($u, $extra = '', $params = []) {
     $sc = scope($u);
     $vis = $sc ? " AND (e.committee_id IS NULL OR e.committee_id = $sc)" : '';
     $ms = $sc ? " AND m.committee_id = $sc" : '';
-    $rows = q("SELECT e.id, e.title, e.event_date, e.event_time, e.end_time, e.location, e.committee_id, e.kind, e.created_by, (SELECT u.full_name FROM users u WHERE u.id = e.created_by) AS added_by, c.name AS committee_name,
-        (SELECT COUNT(*) FROM members m WHERE m.status = 'active' AND (e.committee_id IS NULL OR m.committee_id = e.committee_id)$ms) AS total,
-        (SELECT COUNT(*) FROM attendance a JOIN members m ON m.id = a.member_id WHERE a.event_id = e.id AND a.status = 'present'$ms) AS present,
-        (SELECT COUNT(*) FROM attendance a JOIN members m ON m.id = a.member_id WHERE a.event_id = e.id$ms) AS marked
-        FROM events e LEFT JOIN committees c ON c.id = e.committee_id
+    $cnt = [];
+    foreach (q("SELECT m.committee_id cid, COUNT(*) c FROM members m WHERE m.status = 'active'$ms GROUP BY m.committee_id")->fetchAll() as $r) $cnt[(int)$r['cid']] = (int)$r['c'];
+    $all = array_sum($cnt);
+    $att = [];
+    foreach (q("SELECT a.event_id, SUM(a.status = 'present') p, COUNT(*) t FROM attendance a JOIN members m ON m.id = a.member_id WHERE 1=1$ms GROUP BY a.event_id")->fetchAll() as $r) $att[(int)$r['event_id']] = [(int)$r['p'], (int)$r['t']];
+    $rows = q("SELECT e.id, e.title, e.event_date, e.event_time, e.end_time, e.location, e.committee_id, e.kind, e.created_by, u.full_name AS added_by, c.name AS committee_name
+        FROM events e LEFT JOIN committees c ON c.id = e.committee_id LEFT JOIN users u ON u.id = e.created_by
         WHERE 1=1$vis $extra ORDER BY e.event_date, e.event_time", $params)->fetchAll();
-    foreach ($rows as &$r) $r['can_edit'] = (isSec($u) || ($r['kind'] === 'custom' && (int)$r['created_by'] === (int)$u['id'])) ? 1 : 0;
+    foreach ($rows as &$r) {
+        $a = $att[(int)$r['id']] ?? [0, 0];
+        $r['total'] = $r['committee_id'] ? ($cnt[(int)$r['committee_id']] ?? 0) : $all;
+        $r['present'] = $a[0]; $r['marked'] = $a[1];
+        $r['can_edit'] = (isSec($u) || ($r['kind'] === 'custom' && (int)$r['created_by'] === (int)$u['id'])) ? 1 : 0;
+    }
     return $rows;
 }
 function eventFor($u, $id) {
@@ -106,13 +109,7 @@ function syncLeaders() {
     }
 }
 
-if ($action !== 'login') {
-    // every action other than login requires a session
-    need();
-    if (in_array($action, ['dashboard', 'events_list', 'att_get', 'att_save', 'members_list', 'records'], true)) {
-        try { syncLeaders(); } catch (Throwable $e) { error_log('syncLeaders: ' . $e->getMessage()); }
-    }
-}
+if ($action !== 'login') need();
 
 switch ($action) {
 
@@ -133,6 +130,11 @@ switch ($action) {
         q('DELETE FROM rate_limits WHERE rkey = ?', [$key]);
         session_regenerate_id(true);
         $_SESSION['uid'] = (int)$r['id'];
+        try {
+            $hasRole = (int)q("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'members' AND COLUMN_NAME = 'member_role'")->fetchColumn();
+            if (!$hasRole) $pdo->exec("ALTER TABLE members ADD COLUMN member_role ENUM('member','leader') NOT NULL DEFAULT 'member' AFTER ministry");
+            syncLeaders();
+        } catch (Throwable $e) { error_log('login init: ' . $e->getMessage()); }
         out(true, 'Welcome!');
     }
 
@@ -148,8 +150,9 @@ switch ($action) {
         $u = need(); $sc = scope($u); $today = date('Y-m-d');
         $ms = $sc ? " AND committee_id = $sc" : '';
         $members = (int)q("SELECT COUNT(*) FROM members WHERE status = 'active'$ms")->fetchColumn();
-        $todayEv = eventList($u, 'AND e.event_date = ?', [$today]);
-        $upcoming = array_slice(eventList($u, 'AND e.event_date > ?', [$today]), 0, 6);
+        $evs = eventList($u, 'AND e.event_date >= ?', [$today]);
+        $todayEv = array_values(array_filter($evs, fn($e) => $e['event_date'] === $today));
+        $upcoming = array_slice(array_values(array_filter($evs, fn($e) => $e['event_date'] > $today)), 0, 6);
         $mw = $sc ? " AND m.committee_id = $sc" : '';
         $rate = [];
         foreach (q("SELECT m.committee_id cid, SUM(a.status = 'present') p, SUM(a.id IS NOT NULL) t FROM events e
@@ -400,10 +403,12 @@ switch ($action) {
             } else {
                 q('UPDATE users SET full_name=?, username=?, role=?, committee_id=?, status=? WHERE id=?', [$name, $un, $role, $cid, $st, $id]);
             }
+            try { syncLeaders(); } catch (Throwable $e) {}
             out(true, 'Account updated.');
         }
         if (strlen($pw) < 6) out(false, 'Give the new account a password of at least 6 characters.');
         q('INSERT INTO users (username, password, full_name, role, committee_id, status) VALUES (?,?,?,?,?,?)', [$un, password_hash($pw, PASSWORD_BCRYPT), $name, $role, $cid, $st]);
+        try { syncLeaders(); } catch (Throwable $e) {}
         out(true, 'Account created. Give the username and password to the leader.');
     }
 
@@ -430,8 +435,7 @@ switch ($action) {
         $u = need(); $sc = scope($u);
         $mj = $sc ? " WHERE m.committee_id = $sc" : '';
         $ms = $sc ? " WHERE committee_id = $sc" : '';
-        $a = q("SELECT COUNT(*) c, COALESCE(MAX(a.marked_at), '') t, COALESCE(SUM(CRC32(CONCAT(a.member_id, '-', a.event_id, '-', a.status, '-', COALESCE(a.time_in, ''), '-', COALESCE(a.reason, '')))), 0) s
-            FROM attendance a JOIN members m ON m.id = a.member_id$mj")->fetch();
+        $a = q("SELECT COUNT(*) c, COALESCE(MAX(a.marked_at), '') t FROM attendance a JOIN members m ON m.id = a.member_id$mj")->fetch();
         $m = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(id, '-', full_name, '-', committee_id, '-', member_role, '-', status, '-', scholar_type, '-', COALESCE(ministry, '')))), 0) s FROM members$ms")->fetch();
         $e = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(id, '-', title, '-', event_date, '-', COALESCE(event_time, ''), '-', COALESCE(end_time, ''), '-', COALESCE(location, ''), '-', COALESCE(committee_id, '')))), 0) s FROM events")->fetch();
         out(true, '', ['hash' => md5(json_encode([$a, $m, $e]))]);

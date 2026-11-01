@@ -306,7 +306,6 @@ switch ($action) {
             if ($cids) {
                 $ph = implode(',', array_fill(0, count($cids), '?'));
                 if ((int)q("SELECT COUNT(*) FROM committees WHERE id IN ($ph)", $cids)->fetchColumn() !== count($cids)) out(false, 'Invalid committee.');
-                if (count($cids) > 1 && (int)q("SELECT COUNT(*) FROM committees WHERE can_merge = 1 AND id IN ($ph)", $cids)->fetchColumn() !== count($cids)) out(false, 'Only committees set up for merged practice can be combined.');
             }
             $kind = $cids ? 'custom' : 'fixed';
         } else {

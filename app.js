@@ -268,7 +268,7 @@ VIEWS.dashboard = async () => {
 function eventModal(e, done) {
   e = e || {};
   const editing = !!e.id, cur = (e.committee_ids || []).map(Number);
-  const mergeable = COMMITTEES.filter(c => +c.can_merge);
+  const mergeable = COMMITTEES; // any committee can join a merged practice
   const sel = new Set(editing ? [e.event_date] : []);
   const base = new Date((editing ? e.event_date : todayStr()) + 'T00:00:00');
   let vy = base.getFullYear(), vm = base.getMonth();

@@ -18,7 +18,7 @@ if (!empty($_SESSION['uid'])) { header('Location: index.php'); exit; }
 <div class="bg" aria-hidden="true"><div class="tiles" id="tiles"></div><div class="shade"></div><div class="spot" id="spot"></div><div class="snow" id="snow"></div></div>
 
 <header class="top">
-  <a class="brand" href="login.php" aria-label="Christmas Presentation Attendance"><img src="logo.png" width="524" height="600" alt=""><span><b>MQAP</b><small>PYM ATTENDANCE</small></span></a>
+  <a class="brand" href="login.php" aria-label="Christmas Presentation Attendance"><img src="logo.png" width="524" height="600" alt=""><span><b>MQAP</b><small>CHRISTMAS PRESENTATION</small></span></a>
   <button class="top-btn" data-open>Log In</button>
 </header>
 

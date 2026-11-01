@@ -17,7 +17,7 @@ if (empty($_SESSION['uid'])) { header('Location: login.php'); exit; }
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" media="print" onload="this.media='all'"><noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"></noscript>
 </head><body>
 <aside id="side">
-  <div class="brand"><img src="logo.png" width="524" height="600" alt="Logo"><div><b>MQAP</b><small>PYM ATTENDANCE</small></div></div>
+  <div class="brand"><img src="logo.png" width="524" height="600" alt="Logo"><div><b>MQAP</b><small style="letter-spacing:.12em;line-height:1.3">CHRISTMAS PRESENTATION</small></div></div>
   <div class="who"><b id="whoName">—</b><small id="whoRole">—</small></div>
   <nav id="nav"></nav>
   <button class="logout" id="logout"><i class="fas fa-right-from-bracket"></i> Log out</button>

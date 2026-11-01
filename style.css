@@ -179,3 +179,4 @@ input[type=time].ti{border:1px solid var(--line2);background:#fff;border-radius:
 input[type=checkbox].ck{width:20px;height:20px;min-width:0;min-height:0;flex:none;margin:0;padding:0;accent-color:var(--blue);cursor:pointer}
 .card form label{display:block;font-weight:600;font-size:13px;margin-top:14px;color:var(--ink)}
 .card form label input,.card form label select{margin-top:6px;font-weight:400}
+.pwrow input{border:1px solid var(--line2);border-radius:9px;padding:9px 12px;background:#fff;min-height:44px;min-width:0}

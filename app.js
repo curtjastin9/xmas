@@ -33,7 +33,7 @@ const isLead = r => (r && (r.member_role || r.role)) === 'leader' ? 1 : 0;
 /** stable sort: leaders always first, everything else keeps its order */
 const leadersFirst = list => list.map((x, i) => [x, i]).sort((a, b) => (isLead(b[0]) - isLead(a[0])) || (a[1] - b[1])).map(x => x[0]);
 
-let ME = null, COMMITTEES = [];
+let ME = null, COMMITTEES = [], LOCATIONS = [];
 const isSec = () => ME && ME.role === 'secretariat';
 const comColor = id => (COMMITTEES.find(c => +c.id === +id) || {}).color || '#64748b';
 const comByName = n => COMMITTEES.find(c => c.name === n);
@@ -261,6 +261,8 @@ function eventModal(e, done) {
   const base = new Date((editing ? e.event_date : todayStr()) + 'T00:00:00');
   let vy = base.getFullYear(), vm = base.getMonth();
   const pad = n => String(n).padStart(2, '0');
+  const locs = LOCATIONS.map(l => l.name);
+  if (e.location && !locs.includes(e.location)) locs.push(e.location); // keep an older free-typed value selectable
 
   const m = modal(`<h3>${editing ? 'Edit schedule' : (isSec() ? 'Add schedule' : 'Add my committee schedule')}</h3>
     <form id="ef">
@@ -276,7 +278,7 @@ function eventModal(e, done) {
         <label>Start time<input name="event_time" type="time" value="${esc((e.event_time || '').slice(0, 5))}"></label>
         <label>End time<input name="end_time" type="time" value="${esc((e.end_time || '').slice(0, 5))}"></label>
       </div>
-      <label>Location<input name="location" maxlength="150" value="${esc(e.location)}" placeholder="e.g. Parish hall"></label>
+      <label>Location<select name="location"><option value="">No location</option>${locs.map(n => `<option ${n === e.location ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select></label>
       ${isSec() ? `<label>For<select name="committee_id"><option value="">Everyone – all committees &amp; leaders</option>
         ${COMMITTEES.map(c => `<option value="${c.id}" ${+cid === +c.id ? 'selected' : ''}>${esc(c.name)} only</option>`).join('')}</select></label>`
         : `<p class="sub" style="margin-top:12px">This schedule is only for <b>${esc(ME.committee_name || 'your committee')}</b>.</p>`}
@@ -990,6 +992,9 @@ VIEWS.settings = async () => {
   view().innerHTML = `${isSec() ? `<div class="card" style="max-width:520px"><div class="head"><div><h3>Rehearsal season</h3><div class="sub">Only schedules between these dates show in Take attendance. Records are limited to them too.</div></div></div>
     <form id="sf"><div class="two"><label>First day<input type="date" name="season_start" required value="${esc(SEASON_START)}"></label><label>Last day<input type="date" name="season_end" required value="${esc(SEASON_END)}"></label></div>
     <div class="actions"><button class="btn pri">Save season</button></div></form></div>` : ''}
+    ${isSec() ? `<div class="card" style="max-width:520px"><div class="head"><div><h3>Locations</h3><div class="sub">The choices shown when adding a schedule.</div></div></div>
+      <div id="locl"></div>
+      <form id="lf" class="pwrow" style="margin-top:12px"><input name="name" maxlength="100" required placeholder="New location" aria-label="New location"><button class="btn pri sm">Add</button></form></div>` : ''}
     <div class="card" style="max-width:520px"><div class="head"><h3>Change password</h3></div>
     <form id="pf"><label>Current password<input name="current" type="password" autocomplete="current-password" required></label>
     <label>New password<input name="password" type="password" autocomplete="new-password" minlength="6" required></label>
@@ -1001,6 +1006,24 @@ VIEWS.settings = async () => {
     const d = await busy($('.pri', e.target), () => call('settings_save', Object.fromEntries(new FormData(e.target)), true));
     if (d && d !== true) { SEASON_START = d.season_start; SEASON_END = d.season_end; sessionStorage.removeItem('me'); }
   };
+  if (isSec()) {
+    const drawLoc = () => {
+      $('#locl').innerHTML = LOCATIONS.length ? LOCATIONS.map(l => `<div class="row"><span>${esc(l.name)}</span><button class="btn sm no" data-dl="${l.id}">Remove</button></div>`).join('') : '<div class="sub">No locations yet.</div>';
+    };
+    drawLoc();
+    $('#lf').onsubmit = async e => {
+      e.preventDefault();
+      const d = await busy($('.pri', e.target), () => call('location_save', Object.fromEntries(new FormData(e.target)), true));
+      if (d && d !== true) { LOCATIONS = d; sessionStorage.removeItem('me'); drawLoc(); e.target.reset(); }
+    };
+    $('#locl').onclick = async e => {
+      const b = e.target.closest('[data-dl]'); if (!b) return;
+      const l = LOCATIONS.find(x => x.id == b.dataset.dl);
+      if (!l || !(await ask('Remove this location?', `"${l.name}" will no longer be a choice. Schedules already using it keep their text.`, 'Remove'))) return;
+      const d = await call('location_delete', { id: l.id }, true);
+      if (d && d !== true) { LOCATIONS = d; sessionStorage.removeItem('me'); drawLoc(); }
+    };
+  }
   $('#pf').onsubmit = async e => {
     e.preventDefault();
     const b = Object.fromEntries(new FormData(e.target));
@@ -1015,7 +1038,7 @@ VIEWS.settings = async () => {
   try { cached = JSON.parse(sessionStorage.getItem('me')); } catch (e) {}
   if (!cached || !cached.user) cached = null;
   const apply = d => {
-    ME = d.user; COMMITTEES = d.committees;
+    ME = d.user; COMMITTEES = d.committees; LOCATIONS = d.locations || [];
     const st = d.settings || {};
     SEASON_START = st.season_start || ''; SEASON_END = st.season_end || '';
     $('#whoName').textContent = ME.full_name;

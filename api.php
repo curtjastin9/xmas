@@ -41,9 +41,14 @@ function settings() {
     catch (Throwable $e) { error_log('settings: ' . $e->getMessage()); }
     return $s;
 }
+/** Location choices for schedules (the `locations` table). */
+function locations() {
+    try { return q('SELECT id, name FROM locations ORDER BY sort_order, id')->fetchAll(); }
+    catch (Throwable $e) { error_log('locations: ' . $e->getMessage()); return []; }
+}
 function meData($u) {
     $u['committee_name'] = $u['committee_id'] ? q('SELECT name FROM committees WHERE id = ?', [$u['committee_id']])->fetchColumn() : null;
-    return ['user' => $u, 'committees' => q('SELECT id, name, color FROM committees ORDER BY sort_order')->fetchAll(), 'settings' => settings()];
+    return ['user' => $u, 'committees' => q('SELECT id, name, color FROM committees ORDER BY sort_order')->fetchAll(), 'settings' => settings(), 'locations' => locations()];
 }
 function isSec($u) { return $u['role'] === 'secretariat'; }
 function needSec() { $u = need(); if (!isSec($u)) out(false, 'Only the Secretariat can do this.'); return $u; }
@@ -192,6 +197,11 @@ switch ($action) {
         foreach ($dates as $d) if (!validDate($d)) out(false, 'One of the dates is invalid.');
         if ($end && !$time) out(false, 'Add a start time too.');
         if ($end && $time && $end <= $time) out(false, 'End time must be after the start time.');
+        if ($loc !== '') { // must be one of the saved locations (an unchanged old value on an existing schedule is also accepted)
+            $okLoc = q('SELECT 1 FROM locations WHERE name = ?', [$loc])->fetchColumn();
+            if (!$okLoc && $id) $okLoc = q('SELECT 1 FROM events WHERE id = ? AND location = ?', [$id, $loc])->fetchColumn();
+            if (!$okLoc) out(false, 'Choose a location from the list.');
+        }
         if (isSec($u)) {
             $cid = (int)($in['committee_id'] ?? 0) ?: null;
             if ($cid && !q('SELECT id FROM committees WHERE id = ?', [$cid])->fetch()) out(false, 'Invalid committee.');
@@ -453,6 +463,21 @@ switch ($action) {
         if ($id === (int)$me['id']) out(false, 'You cannot delete your own account.');
         q('DELETE FROM users WHERE id = ?', [$id]);
         out(true, 'Account deleted. Attendance they marked is kept.');
+    }
+
+    case 'location_save': {
+        needSec();
+        $name = cut($in['name'] ?? '', 100);
+        if ($name === '') out(false, 'Type a location name.');
+        if (q('SELECT id FROM locations WHERE name = ?', [$name])->fetch()) out(false, 'That location already exists.');
+        q('INSERT INTO locations (name, sort_order) SELECT ?, COALESCE(MAX(sort_order), 0) + 1 FROM locations', [$name]);
+        out(true, 'Location added.', locations());
+    }
+
+    case 'location_delete': {
+        needSec();
+        q('DELETE FROM locations WHERE id = ?', [(int)($in['id'] ?? 0)]);
+        out(true, 'Location removed. Schedules already using it keep their text.', locations());
     }
 
     case 'settings_save': {

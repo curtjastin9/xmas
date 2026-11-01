@@ -6,7 +6,8 @@ function out($ok, $msg = '', $data = null, $code = null) {
     echo json_encode(['success' => $ok, 'message' => $msg, 'data' => $data, 'code' => $code], JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
     exit;
 }
-set_exception_handler(function ($e) { error_log('xmas: ' . $e->getMessage()); out(false, 'Something went wrong on the server. Please try again.'); });
+// Logged-in users (valid signed cookie) also get the technical reason, so problems can be diagnosed from the screen.
+set_exception_handler(function ($e) { error_log('xmas: ' . $e->getMessage()); out(false, 'Something went wrong on the server. Please try again.' . (!empty($_SESSION['uid']) ? ' [' . substr($e->getMessage(), 0, 300) . ']' : '')); });
 
 $pdo = db();
 $action = $_GET['action'] ?? '';
@@ -155,13 +156,14 @@ function syncLeaders() {
 }
 
 /** Creates anything the app needs that the database lacks. Additive only; runs once per server instance. */
-function ensureSchema() {
+function ensureSchema($force = false) {
     global $pdo;
+    $errs = [];
     $flag = sys_get_temp_dir() . '/mq_schema_v2';
-    if (is_file($flag)) return;
+    if (!$force && is_file($flag)) return $errs;
     $hasTable = fn($t) => (bool)q('SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', [$t])->fetchColumn();
     $hasCol = fn($t, $c) => (bool)q('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?', [$t, $c])->fetchColumn();
-    $run = function ($sql) use ($pdo) { try { $pdo->exec($sql); } catch (Throwable $e) { error_log('schema: ' . $e->getMessage() . ' :: ' . $sql); } };
+    $run = function ($sql) use ($pdo, &$errs) { try { $pdo->exec($sql); } catch (Throwable $e) { error_log('schema: ' . $e->getMessage() . ' :: ' . $sql); $errs[] = substr($sql, 0, 80) . ' => ' . $e->getMessage(); } };
 
     $freshLinks = !$hasTable('event_committees');
     $run("CREATE TABLE IF NOT EXISTS event_committees (event_id BIGINT NOT NULL, committee_id BIGINT NOT NULL, PRIMARY KEY (event_id, committee_id))");
@@ -193,6 +195,7 @@ function ensureSchema() {
     if (!q("SELECT 1 FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'attendance' AND NON_UNIQUE = 0 AND COLUMN_NAME = 'event_id' LIMIT 1")->fetchColumn())
         $run('ALTER TABLE attendance ADD UNIQUE KEY uq_att (member_id, event_id)');
     @file_put_contents($flag, '1');
+    return $errs;
 }
 try { ensureSchema(); } catch (Throwable $e) { error_log('ensureSchema: ' . $e->getMessage()); }
 
@@ -223,6 +226,35 @@ switch ($action) {
     }
 
     case 'logout': { clear_login(); out(true); }
+
+    /* Secretariat-only health check: open  /api.php?action=diag  in the browser while logged in. */
+    case 'diag': {
+        $u = needSec();
+        $r = ['php' => PHP_VERSION, 'database' => $pdo->query('SELECT DATABASE()')->fetchColumn(), 'schema_errors' => ensureSchema(true), 'tables' => [], 'steps' => []];
+        foreach (['users', 'committees', 'members', 'events', 'attendance', 'event_committees', 'locations', 'settings', 'rate_limits'] as $t) {
+            try {
+                $cols = q('SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', [$t])->fetchAll(PDO::FETCH_COLUMN);
+                $r['tables'][$t] = $cols ? ['columns' => implode(', ', $cols), 'rows' => (int)$pdo->query("SELECT COUNT(*) FROM `$t`")->fetchColumn()] : 'MISSING';
+            } catch (Throwable $e) { $r['tables'][$t] = 'ERROR: ' . $e->getMessage(); }
+        }
+        $today = date('Y-m-d');
+        $steps = [
+            'eventList' => fn() => count(eventList($u, 'AND e.event_date >= ?', [$today])),
+            'rate_query' => fn() => count(q("SELECT m.committee_id cid, SUM(a.status = 'present') p, SUM(a.id IS NOT NULL) t
+                FROM events e CROSS JOIN members m LEFT JOIN attendance a ON a.event_id = e.id AND a.member_id = m.id
+                WHERE m.status = 'active' AND " . expectedSql() . " AND e.event_date <= ? GROUP BY m.committee_id", [$today])->fetchAll()),
+            'committees_query' => fn() => count(q("SELECT c.id, c.name, c.color, (SELECT COUNT(*) FROM members m WHERE m.committee_id = c.id AND m.status = 'active') AS members FROM committees c ORDER BY c.sort_order")->fetchAll()),
+            'committees()' => fn() => count(committees()),
+            'settings()' => fn() => json_encode(settings()),
+            'records_query' => fn() => count(q("SELECT e.id FROM events e CROSS JOIN members m JOIN committees c ON c.id = m.committee_id
+                LEFT JOIN attendance a ON a.event_id = e.id AND a.member_id = m.id
+                WHERE " . expectedSql() . " AND e.event_date BETWEEN ? AND ? AND (m.status = 'active' OR a.id IS NOT NULL) LIMIT 5", [$today, $today])->fetchAll()),
+        ];
+        foreach ($steps as $k => $fn) {
+            try { $r['steps'][$k] = 'ok: ' . $fn(); } catch (Throwable $e) { $r['steps'][$k] = 'ERROR: ' . $e->getMessage(); }
+        }
+        out(true, '', $r);
+    }
 
     case 'me': { out(true, '', meData(need())); }
 

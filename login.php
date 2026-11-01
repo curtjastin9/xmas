@@ -11,7 +11,7 @@ if (!empty($_SESSION['uid'])) { header('Location: index.php'); exit; }
 <meta name="theme-color" content="#050A26">
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" media="print" onload="this.media='all'"><noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"></noscript>
 <link rel="stylesheet" href="login.css?v=1">
 </head><body>
 <div class="bg" aria-hidden="true"><div class="tiles" id="tiles"></div><div class="shade"></div><div class="spot" id="spot"></div></div>
@@ -66,7 +66,7 @@ if (!empty($_SESSION['uid'])) { header('Location: index.php'); exit; }
   ];
   let s = 7; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
   const box = document.getElementById('tiles'); let h = '';
-  for (let i = 0; i < 64; i++) {
+  for (let i = 0; i < 40; i++) {
     const tall = rnd() > .62 ? 'grid-row:span 2;' : '';
     h += `<div class="tile" style="${tall}background:${fills[Math.floor(rnd() * fills.length)]}"><i class="fas fa-${icons[Math.floor(rnd() * icons.length)]}"></i></div>`;
   }
@@ -98,7 +98,7 @@ f.addEventListener('submit', async e => {
   go.disabled = true; go.textContent = 'Logging in…'; msg.textContent = '';
   try {
     const r = await (await fetch('api.php?action=login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(f))) })).json();
-    if (r.success) { go.textContent = 'Welcome!'; sessionStorage.removeItem('me'); location.href = 'index.php'; return; }
+    if (r.success) { go.textContent = 'Welcome!'; try { sessionStorage.setItem('me', JSON.stringify(r.data)); } catch (e) {} location.href = 'index.php'; return; }
     msg.textContent = r.message;
   } catch (x) { msg.textContent = 'Network error. Check your connection.'; }
   go.disabled = false; go.textContent = 'Log in';

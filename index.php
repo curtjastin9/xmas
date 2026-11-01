@@ -14,7 +14,7 @@ if (empty($_SESSION['uid'])) { header('Location: login.php'); exit; }
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
 <link rel="stylesheet" href="style.css?v=12">
 <link rel="stylesheet" href="mobile.css?v=1">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" media="print" onload="this.media='all'"><noscript><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"></noscript>
 </head><body>
 <aside id="side">
   <div class="brand"><img src="logo.png" width="524" height="600" alt="Logo"><div><b>MQAP</b><small>PYM ATTENDANCE</small></div></div>
@@ -28,5 +28,5 @@ if (empty($_SESSION['uid'])) { header('Location: login.php'); exit; }
   <div id="view"></div>
 </main>
 <div id="toasts" role="status" aria-live="polite"></div>
-<script src="app.js?v=15"></script>
+<script src="app.js?v=16"></script>
 </body></html>

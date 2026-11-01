@@ -180,7 +180,7 @@ async function pulse() {
   const fn = liveRefresh;
   try { if ((await fn()) === false) lastPulse = prev; } catch (e) { console.error(e); lastPulse = prev; }
 }
-setInterval(pulse, 15000);
+setInterval(pulse, 30000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) pulse(); });
 addEventListener('online', pulse);
 

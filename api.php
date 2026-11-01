@@ -27,6 +27,10 @@ function user() {
     return $u;
 }
 function need() { $u = user(); if (!$u) out(false, 'Your session has expired. Please log in again.', null, 'auth'); return $u; }
+function meData($u) {
+    $u['committee_name'] = $u['committee_id'] ? q('SELECT name FROM committees WHERE id = ?', [$u['committee_id']])->fetchColumn() : null;
+    return ['user' => $u, 'committees' => q('SELECT id, name, color FROM committees ORDER BY sort_order')->fetchAll()];
+}
 function isSec($u) { return $u['role'] === 'secretariat'; }
 function needSec() { $u = need(); if (!isSec($u)) out(false, 'Only the Secretariat can do this.'); return $u; }
 /** null = Secretariat (everything), otherwise the leader's committee id */
@@ -112,6 +116,7 @@ function syncLeaders() {
     }
 }
 
+if ($action === 'ping') { q('SELECT 1'); out(true, 'ok'); }
 if ($action !== 'login') need();
 
 switch ($action) {
@@ -130,24 +135,15 @@ switch ($action) {
             out(false, 'Wrong username or password.');
         }
         if ($r['status'] !== 'active') out(false, 'This account is disabled. Ask the Secretariat.');
-        q('DELETE FROM rate_limits WHERE rkey = ?', [$key]);
-        session_regenerate_id(true);
-        $_SESSION['uid'] = (int)$r['id'];
-        try {
-            $hasRole = (int)q("SELECT COUNT(*) FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'members' AND COLUMN_NAME = 'member_role'")->fetchColumn();
-            if (!$hasRole) $pdo->exec("ALTER TABLE members ADD COLUMN member_role ENUM('member','leader') NOT NULL DEFAULT 'member' AFTER ministry");
-            syncLeaders();
-        } catch (Throwable $e) { error_log('login init: ' . $e->getMessage()); }
-        out(true, 'Welcome!');
+        if ($n) q('DELETE FROM rate_limits WHERE rkey = ?', [$key]);
+        set_login((int)$r['id']);
+        $lu = ['id' => $r['id'], 'username' => $r['username'], 'full_name' => $r['full_name'], 'role' => $r['role'], 'committee_id' => $r['committee_id'], 'status' => $r['status']];
+        out(true, 'Welcome!', meData($lu));
     }
 
-    case 'logout': { $_SESSION = []; session_destroy(); out(true); }
+    case 'logout': { clear_login(); out(true); }
 
-    case 'me': {
-        $u = need();
-        $u['committee_name'] = $u['committee_id'] ? q('SELECT name FROM committees WHERE id = ?', [$u['committee_id']])->fetchColumn() : null;
-        out(true, '', ['user' => $u, 'committees' => q('SELECT id, name, color FROM committees ORDER BY sort_order')->fetchAll()]);
-    }
+    case 'me': { out(true, '', meData(need())); }
 
     case 'dashboard': {
         $u = need(); $sc = scope($u); $today = date('Y-m-d');
@@ -274,9 +270,9 @@ switch ($action) {
             $pdo->beginTransaction();
             $dl = $pdo->prepare('DELETE FROM attendance WHERE member_id = ? AND event_id = ?');
             foreach ($del as $mid) $dl->execute([$mid, $e['id']]);
-            $ins = $pdo->prepare('INSERT INTO attendance (member_id, event_id, status, time_in, reason, marked_by, marked_at) VALUES (?,?,?,?,?,?,NOW())
+            $ins = $pdo->prepare('INSERT INTO attendance (member_id, event_id, status, time_in, reason, marked_by, marked_at) VALUES (?,?,?,?,?,?,?)
                 ON DUPLICATE KEY UPDATE status = VALUES(status), time_in = VALUES(time_in), reason = VALUES(reason), marked_by = VALUES(marked_by), marked_at = VALUES(marked_at)');
-            foreach ($clean as [$mid, $st, $t, $reason]) $ins->execute([$mid, $e['id'], $st, $t, $reason, $u['id']]);
+            foreach ($clean as [$mid, $st, $t, $reason]) $ins->execute([$mid, $e['id'], $st, $t, $reason, $u['id'], date('Y-m-d H:i:s')]);
             $pdo->commit();
         } catch (Throwable $ex) {
             if ($pdo->inTransaction()) $pdo->rollBack();

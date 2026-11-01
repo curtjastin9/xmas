@@ -25,8 +25,8 @@ if (!empty($_SESSION['uid'])) { header('Location: index.php'); exit; }
 <main class="hero">
   <div class="logo-wrap rise" style="--i:0"><img src="logo.png" width="524" height="600" alt="Logo: Bringing Christ to our fellow Youth"></div>
   <div class="pill rise" style="--i:1"><i class="fas fa-tree"></i> Christmas Presentation Attendance System</div>
-  <h1 class="tag rise" style="--i:2">Bringing <span class="gold">Christ</span><br>to our fellow Youth.</h1>
-  <div class="divider rise" style="--i:3" aria-hidden="true"><span></span><i class="fas fa-star"></i><span></span></div>
+  <h1 class="rise" style="--i:2">For the <span class="gold">Youth.</span><br>For the Lord.</h1>
+  <p class="tag rise" style="--i:3">Bringing Christ to our fellow Youth.</p>
   <p class="lead rise" style="--i:4">A clear, real-time record of attendance for every rehearsal and the Christmas Presentation, managed by your Secretariat and committee leaders.</p>
   <button class="cta rise" style="--i:5" data-open><i class="fas fa-right-to-bracket"></i> Login <i class="fas fa-chevron-right ar"></i></button>
   <div class="feats rise" style="--i:6">

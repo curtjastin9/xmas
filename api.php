@@ -54,6 +54,7 @@ function locationRules() {
         'props' => ['Solidarity Hallway'],          // fixed
         'scriptwriter' => ['Coy Room'],             // fixed
         'scriptwriters' => ['Coy Room'],            // fixed
+        'foodcom' => ['Soli Kitchen'],             // fixed
         'canvas' => $two, 'lights' => $two, 'finaldance' => $two, 'characters' => $two, // may choose
     ];
     $rules = [];
@@ -192,7 +193,7 @@ function syncLeaders() {
 function ensureSchema($force = false) {
     global $pdo;
     $errs = [];
-    $flag = sys_get_temp_dir() . '/mq_schema_v4';
+    $flag = sys_get_temp_dir() . '/mq_schema_v5';
     if (!$force && is_file($flag)) return $errs;
     $hasTable = fn($t) => (bool)q('SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', [$t])->fetchColumn();
     $hasCol = fn($t, $c) => (bool)q('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?', [$t, $c])->fetchColumn();
@@ -206,11 +207,11 @@ function ensureSchema($force = false) {
 
     // one-time: make sure the practice places exist (removing one later in Settings sticks)
     try {
-        if (!q("SELECT 1 FROM settings WHERE k = 'loc_seed_v1'")->fetchColumn()) {
-            foreach (['Solidarity Hallway', 'Solidarity Hall', 'Inside Church', 'Coy Room'] as $ln)
+        if (!q("SELECT 1 FROM settings WHERE k = 'loc_seed_v2'")->fetchColumn()) {
+            foreach (['Solidarity Hallway', 'Solidarity Hall', 'Inside Church', 'Coy Room', 'Soli Kitchen'] as $ln)
                 if (!q('SELECT 1 FROM locations WHERE name = ?', [$ln])->fetchColumn())
                     q('INSERT INTO locations (name, sort_order) SELECT ?, COALESCE(MAX(sort_order), 0) + 1 FROM locations', [$ln]);
-            q("INSERT INTO settings (k, v) VALUES ('loc_seed_v1', '1') ON DUPLICATE KEY UPDATE v = v");
+            q("INSERT INTO settings (k, v) VALUES ('loc_seed_v2', '1') ON DUPLICATE KEY UPDATE v = v");
         }
     } catch (Throwable $e) { error_log('seed locations: ' . $e->getMessage()); $errs[] = 'seed locations => ' . $e->getMessage(); }
 

@@ -26,7 +26,8 @@ const SCHOLAR = { none: 'NON-SCHOLAR', shs: 'SHS-SCHOLAR', college: 'COLLEGE-SCH
 const SCHOLAR_SHORT = SCHOLAR;
 const STATUS_LABEL = { present: 'Present', absent: 'Absent', excused: 'Excused', pending: 'Not yet modified' };
 const ROLE = { member: 'Member', leader: 'Leader' };
-const MINISTRIES = ['PYM', 'MAS', 'MLM', 'COY', 'LOM', 'TYM'];
+let MINISTRY_ROWS = []; // [{id, name}] from the database
+let MINISTRIES = ['PYM', 'MAS', 'MLM', 'COY', 'LOM', 'TYM']; // replaced by the list saved in Settings
 /** <option>s for the ministry dropdown; a older free-typed value stays selectable */
 const ministryOpts = cur => {
   const v = String(cur || '').trim(), list = v && !MINISTRIES.includes(v) ? [...MINISTRIES, v] : MINISTRIES;
@@ -1074,6 +1075,9 @@ VIEWS.settings = async () => {
     ${isSec() ? `<div class="card" style="max-width:520px"><div class="head"><div><h3>Locations</h3><div class="sub">The choices shown when adding a schedule.</div></div></div>
       <div id="locl"></div>
       <form id="lf" class="pwrow" style="margin-top:12px"><input name="name" maxlength="100" required placeholder="New location" aria-label="New location"><button class="btn pri sm">Add</button></form></div>` : ''}
+    ${isSec() ? `<div class="card" style="max-width:520px"><div class="head"><div><h3>Ministry</h3><div class="sub">The choices shown for every member. A new ministry appears in all member lists right away.</div></div></div>
+      <div id="minl"></div>
+      <form id="mnf" class="pwrow" style="margin-top:12px"><input name="name" maxlength="100" required placeholder="New ministry" aria-label="New ministry"><button class="btn pri sm">Add</button></form></div>` : ''}
     <div class="card" style="max-width:520px"><div class="head"><h3>Change password</h3></div>
     <form id="pf"><label>Current password<input name="current" type="password" autocomplete="current-password" required></label>
     <label>New password<input name="password" type="password" autocomplete="new-password" minlength="6" required></label>
@@ -1103,6 +1107,25 @@ VIEWS.settings = async () => {
       if (d && d !== true) { LOCATIONS = d; sessionStorage.removeItem('me'); drawLoc(); }
     };
   }
+  if (isSec()) {
+    const drawMin = () => {
+      $('#minl').innerHTML = MINISTRY_ROWS.length ? MINISTRY_ROWS.map(m => `<div class="row"><span>${esc(m.name)}</span><button class="btn sm no" data-dm="${m.id}">Remove</button></div>`).join('') : '<div class="sub">No ministries yet.</div>';
+    };
+    const take = d => { MINISTRY_ROWS = d; MINISTRIES = d.map(x => x.name); sessionStorage.removeItem('me'); drawMin(); };
+    drawMin();
+    $('#mnf').onsubmit = async e => {
+      e.preventDefault();
+      const d = await busy($('.pri', e.target), () => call('ministry_save', Object.fromEntries(new FormData(e.target)), true));
+      if (d && d !== true) { take(d); e.target.reset(); }
+    };
+    $('#minl').onclick = async e => {
+      const b = e.target.closest('[data-dm]'); if (!b) return;
+      const m = MINISTRY_ROWS.find(x => x.id == b.dataset.dm);
+      if (!m || !(await ask('Remove this ministry?', `"${m.name}" will no longer be a choice. Members already in it keep their text.`, 'Remove'))) return;
+      const d = await call('ministry_delete', { id: m.id }, true);
+      if (d && d !== true) take(d);
+    };
+  }
   $('#pf').onsubmit = async e => {
     e.preventDefault();
     const b = Object.fromEntries(new FormData(e.target));
@@ -1117,7 +1140,8 @@ VIEWS.settings = async () => {
   try { cached = JSON.parse(sessionStorage.getItem('me')); } catch (e) {}
   if (!cached || !cached.user) cached = null;
   const apply = d => {
-    ME = d.user; COMMITTEES = d.committees; LOCATIONS = d.locations || []; LOCATION_RULES = d.location_rules || {};
+    ME = d.user; COMMITTEES = d.committees; if (d.ministries) { MINISTRY_ROWS = d.ministries; MINISTRIES = d.ministries.map(x => x.name); }
+    LOCATIONS = d.locations || []; LOCATION_RULES = d.location_rules || {};
     const st = d.settings || {};
     SEASON_START = st.season_start || ''; SEASON_END = st.season_end || '';
     $('#whoName').textContent = ME.full_name;

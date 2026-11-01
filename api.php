@@ -47,6 +47,11 @@ function locations() {
     try { return q('SELECT id, name FROM locations ORDER BY sort_order, id')->fetchAll(); }
     catch (Throwable $e) { error_log('locations: ' . $e->getMessage()); return []; }
 }
+/** Ministry choices for members (the `ministries` table). */
+function ministries() {
+    try { return q('SELECT id, name FROM ministries ORDER BY sort_order, id')->fetchAll(); }
+    catch (Throwable $e) { error_log('ministries: ' . $e->getMessage()); return []; }
+}
 /** Where each committee may practise (matched by committee name). A list = only those places; null = any location. */
 function locationRules() {
     $two = ['Solidarity Hall', 'Inside Church'];
@@ -79,7 +84,7 @@ function committees() {
 }
 function meData($u) {
     $u['committee_name'] = $u['committee_id'] ? q('SELECT name FROM committees WHERE id = ?', [$u['committee_id']])->fetchColumn() : null;
-    return ['user' => $u, 'committees' => committees(), 'settings' => settings(), 'locations' => locations(), 'location_rules' => locationRules()];
+    return ['user' => $u, 'committees' => committees(), 'settings' => settings(), 'locations' => locations(), 'ministries' => ministries(), 'location_rules' => locationRules()];
 }
 function isSec($u) { return $u['role'] === 'secretariat'; }
 function needSec() { $u = need(); if (!isSec($u)) out(false, 'Only the Secretariat can do this.'); return $u; }
@@ -193,7 +198,7 @@ function syncLeaders() {
 function ensureSchema($force = false) {
     global $pdo;
     $errs = [];
-    $flag = sys_get_temp_dir() . '/mq_schema_v5';
+    $flag = sys_get_temp_dir() . '/mq_schema_v6';
     if (!$force && is_file($flag)) return $errs;
     $hasTable = fn($t) => (bool)q('SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', [$t])->fetchColumn();
     $hasCol = fn($t, $c) => (bool)q('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?', [$t, $c])->fetchColumn();
@@ -202,6 +207,7 @@ function ensureSchema($force = false) {
     $freshLinks = !$hasTable('event_committees');
     $run("CREATE TABLE IF NOT EXISTS event_committees (event_id BIGINT NOT NULL, committee_id BIGINT NOT NULL, PRIMARY KEY (event_id, committee_id))");
     $run("CREATE TABLE IF NOT EXISTS locations (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100) NOT NULL, sort_order INT NOT NULL DEFAULT 0)");
+    $run("CREATE TABLE IF NOT EXISTS ministries (id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100) NOT NULL, sort_order INT NOT NULL DEFAULT 0)");
     $run("CREATE TABLE IF NOT EXISTS settings (k VARCHAR(50) NOT NULL PRIMARY KEY, v VARCHAR(255) NOT NULL)");
     $run("CREATE TABLE IF NOT EXISTS rate_limits (id INT AUTO_INCREMENT PRIMARY KEY, rkey VARCHAR(150) NOT NULL, hit_at INT NOT NULL, KEY k1 (rkey, hit_at))");
 
@@ -214,6 +220,16 @@ function ensureSchema($force = false) {
             q("INSERT INTO settings (k, v) VALUES ('loc_seed_v2', '1') ON DUPLICATE KEY UPDATE v = v");
         }
     } catch (Throwable $e) { error_log('seed locations: ' . $e->getMessage()); $errs[] = 'seed locations => ' . $e->getMessage(); }
+
+    // one-time: starting ministries (removing one later in Settings sticks)
+    try {
+        if (!q("SELECT 1 FROM settings WHERE k = 'min_seed_v1'")->fetchColumn()) {
+            foreach (['PYM', 'MAS', 'MLM', 'COY', 'LOM', 'TYM'] as $mn)
+                if (!q('SELECT 1 FROM ministries WHERE name = ?', [$mn])->fetchColumn())
+                    q('INSERT INTO ministries (name, sort_order) SELECT ?, COALESCE(MAX(sort_order), 0) + 1 FROM ministries', [$mn]);
+            q("INSERT INTO settings (k, v) VALUES ('min_seed_v1', '1') ON DUPLICATE KEY UPDATE v = v");
+        }
+    } catch (Throwable $e) { error_log('seed ministries: ' . $e->getMessage()); $errs[] = 'seed ministries => ' . $e->getMessage(); }
 
     // old single-committee column -> new link table
     if ($hasCol('events', 'committee_id')) {
@@ -661,6 +677,21 @@ switch ($action) {
         needSec();
         q('DELETE FROM locations WHERE id = ?', [(int)($in['id'] ?? 0)]);
         out(true, 'Location removed. Schedules already using it keep their text.', locations());
+    }
+
+    case 'ministry_save': {
+        needSec();
+        $name = cut($in['name'] ?? '', 100);
+        if ($name === '') out(false, 'Type a ministry name.');
+        if (q('SELECT id FROM ministries WHERE LOWER(name) = ?', [strtolower($name)])->fetch()) out(false, 'That ministry already exists.');
+        q('INSERT INTO ministries (name, sort_order) SELECT ?, COALESCE(MAX(sort_order), 0) + 1 FROM ministries', [$name]);
+        out(true, 'Ministry added.', ministries());
+    }
+
+    case 'ministry_delete': {
+        needSec();
+        q('DELETE FROM ministries WHERE id = ?', [(int)($in['id'] ?? 0)]);
+        out(true, 'Ministry removed. Members already in it keep their text.', ministries());
     }
 
     case 'settings_save': {

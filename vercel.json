@@ -1,17 +1,33 @@
 {
-  "version": 2,
   "regions": ["sin1"],
   "builds": [
-    { "src": "*.php", "use": "vercel-php@0.7.4" },
-    { "src": "*.css", "use": "@vercel/static" },
-    { "src": "*.js", "use": "@vercel/static" },
-    { "src": "*.png", "use": "@vercel/static" }
+    { "src": "home.php", "use": "vercel-php@0.7.3", "config": { "includeFiles": ["*.php"] } },
+    { "src": "index.php", "use": "vercel-php@0.7.3", "config": { "includeFiles": ["*.php"] } },
+    { "src": "login.php", "use": "vercel-php@0.7.3", "config": { "includeFiles": ["*.php"] } },
+    { "src": "api.php", "use": "vercel-php@0.7.3", "config": { "includeFiles": ["*.php"] } },
+    { "src": "api_records.php", "use": "vercel-php@0.7.3", "config": { "includeFiles": ["*.php"] } },
+    { "src": "api_coy.php", "use": "vercel-php@0.7.3", "config": { "includeFiles": ["*.php"] } },
+    { "src": "api_attendance.php", "use": "vercel-php@0.7.3", "config": { "includeFiles": ["*.php"] } },
+    { "src": "api_account.php", "use": "vercel-php@0.7.3", "config": { "includeFiles": ["*.php"] } },
+    { "src": "api_slotchange.php", "use": "vercel-php@0.7.3", "config": { "includeFiles": ["*.php"] } },
+    { "src": "api_eventslots.php", "use": "vercel-php@0.7.3", "config": { "includeFiles": ["*.php"] } },
+    { "src": "**/*.png", "use": "@vercel/static" },
+    { "src": "**/*.jpg", "use": "@vercel/static" },
+    { "src": "**/*.jpeg", "use": "@vercel/static" },
+    { "src": "**/*.ico", "use": "@vercel/static" },
+    { "src": "**/*.svg", "use": "@vercel/static" },
+    { "src": "**/*.webp", "use": "@vercel/static" },
+    { "src": "**/*.PNG", "use": "@vercel/static" },
+    { "src": "**/*.JPG", "use": "@vercel/static" },
+    { "src": "**/*.css", "use": "@vercel/static" },
+    { "src": "**/*.js", "use": "@vercel/static" }
   ],
   "routes": [
-    { "src": "/session\\.php", "status": 404 },
-    { "src": "/dbcheck\\.php", "status": 404 },
-    { "src": "/(.*)\\.(css|js|png)", "headers": { "cache-control": "public, max-age=31536000, immutable" }, "continue": true },
+    { "src": "/", "dest": "/home.php" },
+    { "src": "/(index|login)\\.html", "dest": "/home.php" },
+    { "src": "/(home|index|login|api|api_records|api_coy|api_attendance|api_account|api_slotchange|api_eventslots)\\.php", "dest": "/$1.php" },
+    { "src": "/(session|config|security|attendance_schema|mail)\\.php", "status": 404, "dest": "/home.php" },
     { "handle": "filesystem" },
-    { "src": "/", "dest": "/index.php" }
+    { "src": "/logo\\.png", "dest": "/LOGO.png" }
   ]
 }

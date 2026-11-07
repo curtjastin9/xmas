@@ -1,9 +1,10 @@
-/* PYM — Events: Type = Event Category, "needs servers" checkbox + typed server names, plus multiple slots with different servers (slt-box). Loaded last on index.php. */
+/* PYM — Events: Type = Event Category, "needs servers" checkbox + typed server names, and "multiple slots" (pick several dates for one event). Loaded last on index.php. */
 (function () {
   const css = `
   .srv-box{margin:4px 0 14px}
   .srv-check{display:flex;align-items:center;gap:10px;font-size:13.5px;font-weight:700;color:var(--text-primary);cursor:pointer;padding:6px 0}
   .srv-check input{width:18px;height:18px;accent-color:var(--sapphire)}
+  .srv-check input:disabled+span{opacity:.5}
   .srv-panel{border:1.5px dashed var(--border-mid);border-radius:var(--radius-sm);padding:14px;background:var(--surface);margin-top:6px}
   .srv-note{font-size:12px;color:var(--text-soft);margin-bottom:10px;line-height:1.5}
   .srv-search{position:relative;max-width:420px}
@@ -18,16 +19,13 @@
   .srv-chip{display:inline-flex;align-items:center;gap:6px;background:var(--sapphire-pale);border:1px solid #BFDBFE;color:var(--sapphire);font-size:12px;font-weight:700;padding:4px 6px 4px 11px;border-radius:99px}
   .srv-chip button{border:none;background:rgba(0,0,0,.08);width:18px;height:18px;border-radius:50%;font-size:11px;line-height:1;color:inherit}
   .srv-empty{font-size:11.5px;color:var(--text-faint);font-style:italic}
-  .slt-box{margin:4px 0 14px}
-  .slt-panel{border:1.5px dashed var(--amber);border-radius:var(--radius-sm);padding:14px;background:#FFFBEB;margin-top:6px}
-  .slt-card{border:1.5px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);padding:12px;margin-bottom:10px}
-  .slt-head{display:flex;gap:8px;align-items:center;margin-bottom:10px}
-  .slt-head .slt-name{flex:1;min-width:0;padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13.5px;font-weight:700;outline:none}
-  .slt-head .slt-name:focus{border-color:var(--sapphire-glow);box-shadow:0 0 0 3px rgba(59,130,246,.10)}
-  .slt-del{border:none;background:var(--crimson-pale);color:var(--crimson);width:36px;height:36px;border-radius:8px;font-size:16px;font-weight:800}
-  .slt-add{border:1.5px solid var(--amber);background:var(--amber-pale);color:var(--amber);font-size:12.5px;font-weight:800;padding:9px 16px;border-radius:var(--radius-sm)}
-  .slt-add:hover{background:var(--amber);color:#fff}
-  .srv-box.locked{opacity:.5}`;
+  .mds-box{margin:4px 0 14px}
+  .mds-panel{border:1.5px dashed var(--amber);border-radius:var(--radius-sm);padding:14px;background:#FFFBEB;margin-top:6px}
+  .mds-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .mds-row input[type=date]{padding:10px 12px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:14px;outline:none;background:#fff}
+  .mds-add{border:1.5px solid var(--amber);background:var(--amber-pale);color:var(--amber);font-size:12.5px;font-weight:800;padding:10px 16px;border-radius:var(--radius-sm)}
+  .mds-add:hover{background:var(--amber);color:#fff}
+  .mds-chip{background:var(--amber-pale);border-color:#FCD34D;color:#92400E}`;
   const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
 
   const $ = id => document.getElementById(id);
@@ -38,12 +36,6 @@
     const r = await coyApi('get_all_youth');
     YOUTH = r.success ? r.data : [];
     return YOUTH;
-  }
-  async function evs(action, payload) {
-    try {
-      const r = await fetch('api_eventslots.php?action=' + action, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {}) });
-      return await r.json();
-    } catch (e) { return { success: false, message: 'Network error. Please check your connection.' }; }
   }
 
   async function refreshCats() {
@@ -57,6 +49,7 @@
     sel.value = cur;
   }
 
+  /* ---------- "Needs servers" ---------- */
   function mount(form) {
     const box = document.createElement('div');
     box.className = 'srv-box';
@@ -108,127 +101,81 @@
         (servers || []).forEach(s => sel.set(String(s.member_id), s.full_name));
         draw(); toggle();
       },
-      reset() { on.checked = false; sel.clear(); inp.value = ''; list.classList.add('hidden'); draw(); toggle(); },
-      lock(v) {
-        if (v) { on.checked = false; toggle(); }
-        on.disabled = !!v; box.classList.toggle('locked', !!v);
-      }
+      reset() { on.checked = false; sel.clear(); inp.value = ''; list.classList.add('hidden'); draw(); toggle(); }
     };
     form.addEventListener('reset', () => setTimeout(api.reset, 0));
     draw();
     return api;
   }
 
-  /* ---------- Multiple slots, each with its own servers ---------- */
-  function mountSlots(form, srv) {
+  /* ---------- "Multiple slots?" = same event on several dates ---------- */
+  function mountDates(form, afterBox) {
+    const dateInput = form.elements['event_date'];
+    const dateField = dateInput.closest('.form-field');
     const box = document.createElement('div');
-    box.className = 'slt-box';
+    box.className = 'mds-box';
     box.innerHTML = `
-      <label class="srv-check"><input type="checkbox" class="slt-on"/> <span>This event has multiple slots (e.g. Slot A, Slot B) with different servers</span></label>
-      <div class="slt-panel hidden">
-        <p class="srv-note">Add each slot and type the names of its servers. Everyone else is an attendee in Attendance, below all the servers.</p>
-        <div class="slt-list"></div>
-        <button type="button" class="slt-add"><i class="fas fa-plus"></i> Add slot</button>
+      <label class="srv-check"><input type="checkbox" class="mds-on"/> <span>This event has multiple slots (select several dates)</span></label>
+      <div class="mds-panel hidden">
+        <p class="srv-note">Pick every date for this event. One event is created for each date, with the same title, time, location and servers.</p>
+        <div class="mds-row"><input type="date" class="mds-in"/><button type="button" class="mds-add"><i class="fas fa-plus"></i> Add date</button></div>
+        <div class="srv-chips"></div>
       </div>`;
-    srv.box.after(box);
-    const on = box.querySelector('.slt-on'), panel = box.querySelector('.slt-panel'), list = box.querySelector('.slt-list'), addBtn = box.querySelector('.slt-add');
-    let slots = [];
+    afterBox.after(box);
+    const on = box.querySelector('.mds-on'), panel = box.querySelector('.mds-panel'), inp = box.querySelector('.mds-in'),
+          addBtn = box.querySelector('.mds-add'), chips = box.querySelector('.srv-chips');
+    const dates = new Set();
 
-    const chipsHtml = i => slots[i].sel.size
-      ? [...slots[i].sel].map(([id, n]) => `<span class="srv-chip">${E(n)}<button type="button" data-rm="${id}" aria-label="Remove">&times;</button></span>`).join('')
-      : '<span class="srv-empty">No servers added yet.</span>';
     const draw = () => {
-      list.innerHTML = slots.map((s, i) => `
-        <div class="slt-card" data-i="${i}">
-          <div class="slt-head"><input type="text" class="slt-name" placeholder="Slot name (e.g. Slot ${String.fromCharCode(65 + (i % 26))})" value="${E(s.name)}" maxlength="100"/><button type="button" class="slt-del" aria-label="Remove slot">&times;</button></div>
-          <div class="srv-search"><i class="fas fa-user-plus"></i><input type="text" class="slt-q" placeholder="Type a server name..." autocomplete="off"/><div class="srv-list hidden"></div></div>
-          <div class="srv-chips">${chipsHtml(i)}</div>
-        </div>`).join('');
+      const arr = [...dates].sort();
+      chips.innerHTML = arr.length
+        ? arr.map(d => `<span class="srv-chip mds-chip">${E(formatDate(d))}<button type="button" data-rm="${d}" aria-label="Remove">&times;</button></span>`).join('')
+        : '<span class="srv-empty">No dates added yet.</span>';
     };
-    const toggle = () => { panel.classList.toggle('hidden', !on.checked); srv.lock(on.checked); };
-    const showList = async card => {
-      const i = +card.dataset.i, q = card.querySelector('.slt-q').value.trim().toLowerCase(), dd = card.querySelector('.srv-list');
-      const all = await youth();
-      const items = all.filter(y => !slots[i].sel.has(String(y.id)) && (!q || y.full_name.toLowerCase().includes(q))).slice(0, 40);
-      dd.innerHTML = items.length
-        ? items.map(y => `<div class="srv-opt" data-id="${y.id}" data-name="${E(y.full_name)}">${E(y.full_name)}</div>`).join('')
-        : '<div class="srv-none">No match</div>';
-      dd.classList.remove('hidden');
+    const toggle = () => {
+      panel.classList.toggle('hidden', !on.checked);
+      dateField.classList.toggle('hidden', on.checked);
+      dateInput.required = !on.checked;
     };
-    const addServer = (card, o) => {
-      const i = +card.dataset.i;
-      slots[i].sel.set(String(o.dataset.id), o.dataset.name);
-      const q = card.querySelector('.slt-q'); q.value = '';
-      card.querySelector('.srv-list').classList.add('hidden');
-      card.querySelector('.srv-chips').innerHTML = chipsHtml(i);
-      q.focus();
+    const add = () => {
+      if (!inp.value) { alert('Please pick a date first.'); return; }
+      dates.add(inp.value); inp.value = ''; draw();
     };
 
-    on.addEventListener('change', () => { if (on.checked && !slots.length) { slots.push({ name: '', sel: new Map() }, { name: '', sel: new Map() }); draw(); } toggle(); });
-    addBtn.addEventListener('click', () => { slots.push({ name: '', sel: new Map() }); draw(); const n = list.querySelectorAll('.slt-name'); if (n.length) n[n.length - 1].focus(); });
-    list.addEventListener('input', e => {
-      const card = e.target.closest('.slt-card'); if (!card) return;
-      if (e.target.classList.contains('slt-name')) slots[+card.dataset.i].name = e.target.value;
-      else if (e.target.classList.contains('slt-q')) showList(card);
+    on.addEventListener('change', () => {
+      if (on.checked && dateInput.value) { dates.add(dateInput.value); draw(); }
+      toggle();
     });
-    list.addEventListener('focusin', e => { if (e.target.classList.contains('slt-q')) showList(e.target.closest('.slt-card')); });
-    list.addEventListener('keydown', e => {
-      if (!e.target.classList.contains('slt-q')) return;
-      const card = e.target.closest('.slt-card');
-      if (e.key === 'Enter') { e.preventDefault(); const o = card.querySelector('.srv-opt'); if (o) addServer(card, o); }
-      else if (e.key === 'Escape') card.querySelector('.srv-list').classList.add('hidden');
-    });
-    list.addEventListener('mousedown', e => { const o = e.target.closest('.srv-opt'); if (o) { e.preventDefault(); addServer(o.closest('.slt-card'), o); } });
-    list.addEventListener('click', e => {
-      const card = e.target.closest('.slt-card'); if (!card) return;
-      const i = +card.dataset.i;
-      if (e.target.closest('.slt-del')) { slots.splice(i, 1); draw(); return; }
-      const b = e.target.closest('[data-rm]');
-      if (b) { slots[i].sel.delete(b.dataset.rm); card.querySelector('.srv-chips').innerHTML = chipsHtml(i); }
-    });
-    document.addEventListener('mousedown', e => { if (!e.target.closest('.srv-search')) list.querySelectorAll('.srv-list').forEach(l => l.classList.add('hidden')); });
+    addBtn.addEventListener('click', add);
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); add(); } });
+    chips.addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (b) { dates.delete(b.dataset.rm); draw(); } });
 
     const api = {
-      get() {
-        return {
-          on: on.checked,
-          slots: on.checked ? slots.filter(s => s.name.trim()).map(s => ({ name: s.name.trim(), server_ids: [...s.sel.keys()] })) : []
-        };
+      get() { return { on: on.checked, dates: on.checked ? [...dates].sort() : [] }; },
+      lock(v) { // editing an existing event: single date only
+        if (v) { on.checked = false; dates.clear(); draw(); toggle(); }
+        on.disabled = !!v; box.style.opacity = v ? '.5' : '';
       },
-      set(data) {
-        slots = (data || []).map(s => ({ name: s.name || '', sel: new Map((s.servers || []).map(x => [String(x.member_id), x.full_name])) }));
-        on.checked = slots.length > 0;
-        draw(); toggle();
-      },
-      reset() { slots = []; on.checked = false; draw(); toggle(); }
+      reset() { on.checked = false; on.disabled = false; box.style.opacity = ''; dates.clear(); inp.value = ''; draw(); toggle(); }
     };
     form.addEventListener('reset', () => setTimeout(api.reset, 0));
+    draw();
     return api;
   }
 
-  async function saveEvent(form, srv, slt, base, after) {
-    const sl = slt.get();
-    if (sl.on && !sl.slots.length) { alert('Add at least one slot and give it a name.'); return; }
-    const payload = Object.assign({}, base, sl.on ? { has_servers: 0, server_ids: [] } : srv.get());
-    const res = await apiCall('save_category_event', payload);
-    if (!res.success) { alert(res.message); return; }
-    let eid = base.id;
-    if (!eid) {
-      const f = await evs('find_event', { category_id: base.category_id, title: base.title, event_date: base.event_date });
-      eid = f.success && f.data ? f.data.id : null;
+  async function saveEvent(form, srv, mds, base, after) {
+    const md = mds.get();
+    if (md.on && !md.dates.length) { alert('Add at least one date.'); return; }
+    const list = md.on ? md.dates : [base.event_date];
+    let ok = 0, last = '';
+    for (const d of list) {
+      const res = await apiCall('save_category_event', Object.assign({}, base, srv.get(), { event_date: d }));
+      if (res.success) ok++; else { last = res.message; break; }
     }
-    if (eid) {
-      const r = await evs('save', { event_id: eid, slots: sl.slots });
-      if (!r.success) { alert(r.message); return; }
-    }
-    alert(res.message);
+    if (ok < list.length) { alert((ok ? ok + ' event(s) saved. ' : '') + last); if (ok) after(); return; }
+    alert(md.on ? ok + ' events added.' : (base.id ? 'Event updated successfully.' : 'Event added successfully.'));
     form.reset(); form.classList.add('hidden');
     after();
-  }
-
-  function applyEdit(srv, slt, ev, slots) {
-    if (slots && slots.length) { srv.reset(); slt.set(slots); }
-    else { slt.set([]); srv.set(Number(ev.has_servers) === 1, ev.servers); }
   }
 
   document.addEventListener('DOMContentLoaded', async () => {
@@ -244,19 +191,20 @@
       fld.innerHTML = '<label>Category</label><select name="category_id" required><option value="">— Select category —</option></select>';
     }
     const admSrv = mount(adm);
-    const admSlt = mountSlots(adm, admSrv);
-    adm.__srv = admSrv; adm.__slt = admSlt;
+    const admMds = mountDates(adm, admSrv.box);
+    adm.__srv = admSrv; adm.__mds = admMds;
     const catSrv = cev ? mount(cev) : null;
-    const catSlt = cev ? mountSlots(cev, catSrv) : null;
+    const catMds = cev ? mountDates(cev, catSrv.box) : null;
     refreshCats();
 
-    $('adminShowEventFormBtn').addEventListener('click', refreshCats);
+    $('adminShowEventFormBtn').addEventListener('click', () => { refreshCats(); admMds.lock(false); });
+    const addCat = $('showCategoryFormBtn');
 
     adm.addEventListener('submit', e => {
       e.preventDefault(); e.stopImmediatePropagation();
       const f = adm.elements;
       if (!f['category_id'].value) { alert('Please select a category.'); return; }
-      saveEvent(adm, admSrv, admSlt, {
+      saveEvent(adm, admSrv, admMds, {
         id: f['id'].value, category_id: f['category_id'].value, title: f['title'].value.trim(),
         event_date: f['event_date'].value, event_time: f['event_time'].value, location: f['location'].value.trim()
       }, () => loadEvents(true));
@@ -266,21 +214,19 @@
       cev.addEventListener('submit', e => {
         e.preventDefault(); e.stopImmediatePropagation();
         const f = cev.elements;
-        saveEvent(cev, catSrv, catSlt, {
+        saveEvent(cev, catSrv, catMds, {
           id: f['id'].value, category_id: f['category_id'].value, title: f['title'].value.trim(),
           event_date: f['event_date'].value, event_time: f['event_time'].value, location: f['location'].value.trim()
         }, () => loadAdminCategories());
       }, true);
 
-      // Editing an event inside Event Categories: fill the servers / slots part
-      document.addEventListener('click', async e => {
-        const b = e.target.closest('.cat-ev-edit');
+      document.addEventListener('click', e => {
+        const b = e.target.closest('.cat-ev-edit, .cat-add-event');
         if (!b) return;
+        if (b.classList.contains('cat-add-event')) { catMds.lock(false); return; }
         let found = null;
         ALL_CATEGORIES.forEach(c => c.events.forEach(ev => { if (String(ev.id) === b.dataset.id) found = ev; }));
-        if (!found) return;
-        const r = await evs('get', { event_id: found.id });
-        applyEdit(catSrv, catSlt, found, r.success ? r.data : []);
+        if (found) { catSrv.set(Number(found.has_servers) === 1, found.servers); catMds.lock(true); }
       });
     }
   });
@@ -298,8 +244,8 @@
     f['category_id'].value = ev.category_id || '';
     f['event_date'].value = ev.event_date; f['event_time'].value = ev.event_time ? ev.event_time.substring(0, 5) : '';
     f['location'].value = ev.location || '';
-    const r = await evs('get', { event_id: ev.id });
-    if (form.__srv && form.__slt) applyEdit(form.__srv, form.__slt, ev, r.success ? r.data : []);
+    if (form.__srv) form.__srv.set(Number(ev.has_servers) === 1, ev.servers);
+    if (form.__mds) form.__mds.lock(true);
     form.classList.remove('hidden'); form.scrollIntoView({ behavior: 'smooth' });
   };
 })();

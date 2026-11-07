@@ -26,7 +26,8 @@
   .slt-rm{border:none;background:var(--crimson-pale);color:var(--crimson);width:34px;height:34px;border-radius:8px;font-size:18px;line-height:1;font-weight:800}
   .slt-rm:hover{background:var(--crimson);color:#fff}
   .slt-add{margin-top:4px}
-  .slt-end{max-width:240px}`;
+  .slt-dadd{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .slt-dadd .slt-d{max-width:200px}`;
   const st = document.createElement('style'); st.textContent = css; document.head.appendChild(st);
 
   const $ = id => document.getElementById(id);
@@ -128,15 +129,28 @@
     box.innerHTML = `
       <label class="srv-check"><input type="checkbox" class="slt-on"/> <span>This event has multiple slots (e.g. Slot A, Slot B) with different servers</span></label>
       <div class="srv-panel slt-panel hidden">
-        <p class="srv-note">Each slot is saved as its own event named "Title – Slot name", with its own servers and its own attendance. To use this for several days (e.g. Simbang Gabi Dec 16–24), set the first date above and the last date below.</p>
-        <div class="form-field"><label>Last date (optional — repeats every day)</label><input type="date" class="slt-end"/></div>
+        <p class="srv-note">Each slot is saved as its own event named "Title – Slot name", with its own servers and its own attendance. It is created for every date you choose: the Date above, plus any extra dates you add below.</p>
+        <div class="form-field"><label>Add more dates (the Date above is already included)</label>
+          <div class="slt-dadd"><input type="date" class="slt-d"/><button type="button" class="add-btn slt-dbtn"><i class="fas fa-plus"></i> Add date</button></div>
+          <div class="srv-chips slt-dchips"></div></div>
         <div class="slt-list"></div>
         <button type="button" class="add-btn slt-add"><i class="fas fa-plus"></i> Add Slot</button>
       </div>`;
     form.querySelector('.form-actions').before(box);
     const on = box.querySelector('.slt-on'), panel = box.querySelector('.slt-panel'),
-          end = box.querySelector('.slt-end'), list = box.querySelector('.slt-list');
+          dIn = box.querySelector('.slt-d'), dChips = box.querySelector('.slt-dchips'), list = box.querySelector('.slt-list');
     let locked = false;
+    const dates = new Set();
+    const drawDates = () => {
+      dChips.innerHTML = [...dates].sort().map(d => `<span class="srv-chip">${escapeHtml(formatDate(d))}<button type="button" data-d="${d}" aria-label="Remove date">&times;</button></span>`).join('');
+    };
+    const addDate = () => {
+      if (!dIn.value) { alert('Pick a date first.'); return; }
+      dates.add(dIn.value); dIn.value = ''; drawDates();
+    };
+    box.querySelector('.slt-dbtn').addEventListener('click', addDate);
+    dIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); addDate(); } });
+    dChips.addEventListener('click', e => { const b = e.target.closest('[data-d]'); if (b) { dates.delete(b.dataset.d); drawDates(); } });
 
     const addSlot = name => {
       const it = document.createElement('div');
@@ -166,14 +180,14 @@
           if (!name) return { error: 'Please type a name for every slot.' };
           slots.push({ name, time: it.querySelector('.slt-time').value, server_ids: it.__p.ids() });
         }
-        return { slots, end_date: end.value };
+        return { slots, dates: [...dates] };
       },
       lock(v) {                       // editing an existing event: slots are only for new events
         locked = !!v;
         box.style.display = locked ? 'none' : '';
-        if (locked) { on.checked = false; list.innerHTML = ''; end.value = ''; sync(); }
+        if (locked) { on.checked = false; list.innerHTML = ''; dates.clear(); drawDates(); sync(); }
       },
-      reset() { locked = false; box.style.display = ''; on.checked = false; list.innerHTML = ''; end.value = ''; sync(); }
+      reset() { locked = false; box.style.display = ''; on.checked = false; list.innerHTML = ''; dates.clear(); drawDates(); sync(); }
     };
     form.addEventListener('reset', () => setTimeout(api.reset, 0));
     return api;
@@ -188,8 +202,7 @@
     const sl = slt.get();
     if (!sl) return apiCall('save_category_event', Object.assign(base, srv.get()));
     if (sl.error) { alert(sl.error); return null; }
-    if (sl.end_date && sl.end_date < base.event_date) { alert('The last date must be on or after the event date.'); return null; }
-    return slotApi('save_slots', Object.assign(base, { slots: sl.slots, end_date: sl.end_date }));
+    return slotApi('save_slots', Object.assign(base, { slots: sl.slots, dates: sl.dates }));
   }
 
   document.addEventListener('DOMContentLoaded', async () => {

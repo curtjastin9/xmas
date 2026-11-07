@@ -46,8 +46,10 @@ switch ($action) {
         $slots    = $input['slots'] ?? [];
 
         if ($title === '' || !okDate($date)) respond(false, 'Title and date are required.');
-        if ($end === '') $end = $date;
-        elseif (!okDate($end) || $end < $date) respond(false, 'The "repeat until" date must be on or after the event date.');
+        $extra = $input['dates'] ?? [];
+        if (!is_array($extra)) $extra = [];
+        foreach ($extra as $x) if (!okDate($x)) respond(false, 'One of the chosen dates is invalid.');
+        if ($end !== '' && (!okDate($end) || $end < $date)) respond(false, 'The "repeat until" date must be on or after the event date.');
 
         $s = $pdo->prepare("SELECT is_system FROM event_categories WHERE id = ?");
         $s->execute([$category_id]);
@@ -56,12 +58,15 @@ switch ($action) {
         if ((int)$c['is_system'] === 1) respond(false, 'Normal Serve uses the fixed weekly slots. Events cannot be added to it.');
 
         // Dates (one per day, max 31)
-        $dates = [];
-        $d = new DateTime($date); $e = new DateTime($end);
-        for (; $d <= $e; $d->modify('+1 day')) {
-            $dates[] = $d->format('Y-m-d');
-            if (count($dates) > 31) respond(false, 'You can add up to 31 days at a time.');
+        $dates = [$date];
+        foreach ($extra as $x) $dates[] = $x;
+        if ($end !== '') {
+            $d = new DateTime($date); $e = new DateTime($end);
+            for (; $d <= $e; $d->modify('+1 day')) $dates[] = $d->format('Y-m-d');
         }
+        $dates = array_values(array_unique($dates));
+        sort($dates);
+        if (count($dates) > 31) respond(false, 'You can add up to 31 dates at a time.');
 
         // Slots
         if (!is_array($slots) || !count($slots)) respond(false, 'Add at least one slot.');

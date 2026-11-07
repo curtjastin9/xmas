@@ -1,10 +1,4 @@
 <?php
-/**
- * Creates an event with several slots (e.g. Simbang Gabi -> Slot A, Slot B),
- * optionally repeated every day until a last date. Each slot becomes its own
- * event ("Title – Slot name") with its own servers and its own attendance.
- * Secretariat only.
- */
 require_once __DIR__ . '/session.php';
 header('Content-Type: application/json');
 require_once 'config.php';
@@ -21,103 +15,124 @@ function respond($success, $message = '', $data = null) {
 function nextId($pdo, $table) {
     return (int)$pdo->query("SELECT COALESCE(MAX(id),0) FROM `$table`")->fetchColumn() + 1;
 }
-function okDate($d) {
-    return is_string($d) && preg_match('/^\d{4}-\d{2}-\d{2}$/', $d) && strtotime($d) !== false;
-}
-function normTime($t) {
-    $t = trim((string)$t);
-    if ($t === '' || !preg_match('/^\d{2}:\d{2}(:\d{2})?$/', $t)) return null;
-    return strlen($t) === 5 ? $t . ':00' : $t;
-}
 
 if (!isset($_SESSION['user_id'])) respond(false, 'Your session has expired. Please log in again.');
 if (($_SESSION['role'] ?? '') !== 'secretariat') respond(false, 'You do not have permission to perform this action.');
+
+function ensureEventSlotSchema($pdo) {
+    if (!empty($_SESSION['evslt_ok'])) return;
+    try {
+        $pdo->exec("CREATE TABLE IF NOT EXISTS `event_slots` (
+            `id` int(11) NOT NULL,
+            `event_id` int(11) NOT NULL,
+            `name` varchar(100) NOT NULL,
+            `sort_order` int(11) NOT NULL DEFAULT 0,
+            PRIMARY KEY (`id`),
+            KEY `idx_es_event` (`event_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $pdo->exec("CREATE TABLE IF NOT EXISTS `event_slot_servers` (
+            `id` int(11) NOT NULL,
+            `slot_id` int(11) NOT NULL,
+            `member_id` int(11) NOT NULL,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uniq_ess` (`slot_id`,`member_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        $_SESSION['evslt_ok'] = 1;
+    } catch (Throwable $e) { error_log('event slots schema: ' . $e->getMessage()); }
+}
+
 ensureEventServerSchema($pdo);
+ensureEventSlotSchema($pdo);
 
 switch ($action) {
 
-    case 'save_slots': {
-        $category_id = (int)($input['category_id'] ?? 0);
-        $title    = trim((string)($input['title'] ?? ''));
-        $date     = (string)($input['event_date'] ?? '');
-        $end      = (string)($input['end_date'] ?? '');
-        $location = trim((string)($input['location'] ?? ''));
-        $baseTime = normTime($input['event_time'] ?? '');
-        $slots    = $input['slots'] ?? [];
+    case 'get': {
+        $eid = (int)($input['event_id'] ?? 0);
+        $s = $pdo->prepare("SELECT id, name FROM event_slots WHERE event_id = ? ORDER BY sort_order ASC, id ASC");
+        $s->execute([$eid]);
+        $slots = $s->fetchAll();
+        $q = $pdo->prepare("SELECT ss.slot_id, y.id AS member_id, y.full_name
+            FROM event_slot_servers ss
+            JOIN event_slots s ON s.id = ss.slot_id
+            JOIN youth_members y ON y.id = ss.member_id
+            WHERE s.event_id = ? ORDER BY y.full_name ASC");
+        $q->execute([$eid]);
+        $by = [];
+        foreach ($q->fetchAll() as $r) $by[(int)$r['slot_id']][] = ['member_id' => (int)$r['member_id'], 'full_name' => $r['full_name']];
+        foreach ($slots as &$sl) $sl['servers'] = $by[(int)$sl['id']] ?? [];
+        unset($sl);
+        respond(true, '', $slots);
+    }
 
-        if ($title === '' || !okDate($date)) respond(false, 'Title and date are required.');
-        $extra = $input['dates'] ?? [];
-        if (!is_array($extra)) $extra = [];
-        foreach ($extra as $x) if (!okDate($x)) respond(false, 'One of the chosen dates is invalid.');
-        if ($end !== '' && (!okDate($end) || $end < $date)) respond(false, 'The "repeat until" date must be on or after the event date.');
+    case 'find_event': {
+        $q = $pdo->prepare("SELECT id FROM events WHERE category_id = ? AND title = ? AND event_date = ? ORDER BY id DESC LIMIT 1");
+        $q->execute([(int)($input['category_id'] ?? 0), trim((string)($input['title'] ?? '')), (string)($input['event_date'] ?? '')]);
+        $id = $q->fetchColumn();
+        respond(true, '', $id ? ['id' => (int)$id] : null);
+    }
 
-        $s = $pdo->prepare("SELECT is_system FROM event_categories WHERE id = ?");
-        $s->execute([$category_id]);
-        $c = $s->fetch();
-        if (!$c) respond(false, 'Please select a category.');
-        if ((int)$c['is_system'] === 1) respond(false, 'Normal Serve uses the fixed weekly slots. Events cannot be added to it.');
+    case 'save': {
+        $eid = (int)($input['event_id'] ?? 0);
+        $in  = $input['slots'] ?? [];
+        if (!is_array($in)) $in = [];
+        $chk = $pdo->prepare("SELECT id FROM events WHERE id = ? AND category_id IS NOT NULL");
+        $chk->execute([$eid]);
+        if (!$chk->fetch()) respond(false, 'Invalid event.');
 
-        // Dates (one per day, max 31)
-        $dates = [$date];
-        foreach ($extra as $x) $dates[] = $x;
-        if ($end !== '') {
-            $d = new DateTime($date); $e = new DateTime($end);
-            for (; $d <= $e; $d->modify('+1 day')) $dates[] = $d->format('Y-m-d');
-        }
-        $dates = array_values(array_unique($dates));
-        sort($dates);
-        if (count($dates) > 31) respond(false, 'You can add up to 31 dates at a time.');
-
-        // Slots
-        if (!is_array($slots) || !count($slots)) respond(false, 'Add at least one slot.');
-        if (count($slots) > 10) respond(false, 'A maximum of 10 slots is allowed.');
-        $clean = []; $seen = [];
-        $chk = $pdo->prepare("SELECT id FROM youth_members WHERE id = ?");
-        foreach ($slots as $sl) {
-            if (!is_array($sl)) continue;
-            $name = actCut(trim((string)($sl['name'] ?? '')), 60);
-            if ($name === '') respond(false, 'Please type a name for every slot.');
-            $key = strtolower($name);
-            if (isset($seen[$key])) respond(false, 'Two slots have the same name: ' . $name);
-            $seen[$key] = true;
-            $ids = $sl['server_ids'] ?? [];
+        $slots = [];
+        foreach ($in as $s) {
+            $name = trim((string)($s['name'] ?? ''));
+            if ($name === '') continue;
+            $ids = $s['server_ids'] ?? [];
             if (!is_array($ids)) $ids = [];
             $ids = array_values(array_unique(array_filter(array_map('intval', $ids), fn($v) => $v > 0)));
-            $valid = [];
-            foreach ($ids as $mid) { $chk->execute([$mid]); if ($chk->fetch()) $valid[] = $mid; }
-            $clean[] = ['name' => $name, 'time' => normTime($sl['time'] ?? '') ?: $baseTime, 'servers' => $valid];
+            $slots[] = ['name' => substr($name, 0, 100), 'ids' => $ids];
         }
-        if (!$clean) respond(false, 'Add at least one slot.');
 
-        $made = 0; $skipped = 0;
         try {
             $pdo->beginTransaction();
-            $eid  = nextId($pdo, 'events');
-            $sid  = nextId($pdo, 'event_servers');
-            $dup  = $pdo->prepare("SELECT id FROM events WHERE title = ? AND event_date = ? AND category_id = ?");
-            $insE = $pdo->prepare("INSERT INTO events (id, title, type, event_date, event_time, location, category_id, has_servers) VALUES (?,?,?,?,?,?,?,?)");
-            $insS = $pdo->prepare("INSERT INTO event_servers (id, event_id, member_id) VALUES (?,?,?)");
-            foreach ($dates as $dt) {
-                foreach ($clean as $sl) {
-                    $evTitle = actCut($title . ' – ' . $sl['name'], 150);
-                    $dup->execute([$evTitle, $dt, $category_id]);
-                    if ($dup->fetch()) { $skipped++; continue; }
-                    $insE->execute([$eid, $evTitle, 'category', $dt, $sl['time'], $location, $category_id, $sl['servers'] ? 1 : 0]);
-                    foreach ($sl['servers'] as $mid) $insS->execute([$sid++, $eid, $mid]);
-                    $eid++; $made++;
+            $pdo->prepare("DELETE FROM event_slot_servers WHERE slot_id IN (SELECT id FROM event_slots WHERE event_id = ?)")->execute([$eid]);
+            $pdo->prepare("DELETE FROM event_slots WHERE event_id = ?")->execute([$eid]);
+
+            if ($slots) {
+                $all = [];
+                foreach ($slots as $s) foreach ($s['ids'] as $m) $all[$m] = true;
+                $valid = [];
+                if ($all) {
+                    $keys = array_keys($all);
+                    $v = $pdo->prepare("SELECT id FROM youth_members WHERE id IN (" . implode(',', array_fill(0, count($keys), '?')) . ")");
+                    $v->execute($keys);
+                    foreach ($v->fetchAll(PDO::FETCH_COLUMN) as $id) $valid[(int)$id] = true;
                 }
+
+                $sid = nextId($pdo, 'event_slots');
+                $ssid = nextId($pdo, 'event_slot_servers');
+                $insS = $pdo->prepare("INSERT INTO event_slots (id, event_id, name, sort_order) VALUES (?,?,?,?)");
+                $insM = $pdo->prepare("INSERT INTO event_slot_servers (id, slot_id, member_id) VALUES (?,?,?)");
+                $union = [];
+                foreach ($slots as $i => $s) {
+                    $insS->execute([$sid, $eid, $s['name'], $i + 1]);
+                    foreach ($s['ids'] as $m) {
+                        if (!isset($valid[$m])) continue;
+                        $insM->execute([$ssid++, $sid, $m]);
+                        $union[$m] = true;
+                    }
+                    $sid++;
+                }
+
+                // keep Attendance working: all slot servers appear as servers of the event
+                $pdo->prepare("DELETE FROM event_servers WHERE event_id = ?")->execute([$eid]);
+                $nid = nextId($pdo, 'event_servers');
+                $insE = $pdo->prepare("INSERT INTO event_servers (id, event_id, member_id) VALUES (?,?,?)");
+                foreach (array_keys($union) as $m) $insE->execute([$nid++, $eid, $m]);
+                $pdo->prepare("UPDATE events SET has_servers = 1 WHERE id = ?")->execute([$eid]);
             }
             $pdo->commit();
         } catch (Throwable $e) {
             if ($pdo->inTransaction()) $pdo->rollBack();
-            error_log('save_slots: ' . $e->getMessage());
-            respond(false, 'Failed to save events: ' . $e->getMessage());
+            respond(false, 'Failed to save slots: ' . $e->getMessage());
         }
-
-        logActivity($pdo, 'save_event_slots', $title, $made . ' event(s) created: ' . count($clean) . ' slot(s) × ' . count($dates) . ' day(s)' . ($skipped ? ', ' . $skipped . ' already existed' : ''));
-        $msg = $made . ' event(s) added (' . count($clean) . ' slot(s) × ' . count($dates) . ' day(s)).';
-        if ($skipped) $msg .= ' ' . $skipped . ' already existed and were skipped.';
-        respond(true, $msg);
+        respond(true, 'Slots saved.');
     }
 
     default:

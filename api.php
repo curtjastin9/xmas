@@ -531,14 +531,22 @@ switch ($action) {
         out(true, 'Member added.');
     }
 
+    /* Deleting a member (Leader or Member) removes their attendance too. If a Leader login account belongs to them, that account is deleted as well. */
     case 'member_delete': {
-        needSec();
+        $me = needSec();
         $id = (int)($in['id'] ?? 0);
-        tx(function () use ($id) {
+        $m = q('SELECT id, full_name, committee_id, member_role FROM members WHERE id = ?', [$id])->fetch();
+        if (!$m) out(false, 'Member not found.');
+        $nm = strtolower(trim($m['full_name']));
+        // leader login account(s) that belong to this person (same name + same committee)
+        $accts = q("SELECT id FROM users WHERE role = 'leader' AND committee_id = ? AND LOWER(TRIM(full_name)) = ?", [$m['committee_id'], $nm])->fetchAll(PDO::FETCH_COLUMN);
+        $accts = array_values(array_filter(array_map('intval', $accts), fn($x) => $x !== (int)$me['id']));
+        tx(function () use ($id, $accts) {
             q('DELETE FROM attendance WHERE member_id = ?', [$id]);
             q('DELETE FROM members WHERE id = ?', [$id]);
+            foreach ($accts as $uid) q('DELETE FROM users WHERE id = ?', [$uid]);
         });
-        out(true, 'Member and their attendance deleted.');
+        out(true, $accts ? 'Leader deleted: their attendance and login account were deleted too.' : 'Member and their attendance deleted.');
     }
 
     case 'members_import': {
@@ -656,12 +664,29 @@ switch ($action) {
         out(true, 'Account created. Give the username and password to the leader.');
     }
 
+    /* Deleting a leader account also deletes that leader's entry in Members and all of their attendance records. */
     case 'user_delete': {
         $me = needSec();
         $id = (int)($in['id'] ?? 0);
         if ($id === (int)$me['id']) out(false, 'You cannot delete your own account.');
-        q('DELETE FROM users WHERE id = ?', [$id]);
-        out(true, 'Account deleted. Attendance they marked is kept.');
+        $t = q('SELECT full_name, committee_id, role FROM users WHERE id = ?', [$id])->fetch();
+        if (!$t) out(false, 'Account not found.');
+        tx(function () use ($id, $t) {
+            q('DELETE FROM users WHERE id = ?', [$id]);
+            if ($t['role'] === 'leader' && $t['committee_id'] && trim($t['full_name']) !== '') {
+                $nm = strtolower(trim($t['full_name']));
+                // keep the member row only if another leader account still uses the same name + committee
+                $other = q("SELECT 1 FROM users WHERE role = 'leader' AND committee_id = ? AND LOWER(TRIM(full_name)) = ?", [$t['committee_id'], $nm])->fetchColumn();
+                if (!$other) {
+                    $mids = q('SELECT id FROM members WHERE LOWER(TRIM(full_name)) = ? AND committee_id = ?', [$nm, $t['committee_id']])->fetchAll(PDO::FETCH_COLUMN);
+                    foreach ($mids as $mid) {
+                        q('DELETE FROM attendance WHERE member_id = ?', [$mid]);
+                        q('DELETE FROM members WHERE id = ?', [$mid]);
+                    }
+                }
+            }
+        });
+        out(true, 'Account deleted, including their entry in Members and their attendance.');
     }
 
     case 'location_save': {

@@ -103,14 +103,6 @@ function scholarOf($v) {
     if (strpos($s, 'college') !== false) return 'college';
     return 'none';
 }
-/** Date the member joined PYM as Y-m-d, or null when blank/invalid (shown as "None") */
-function joinedOf($v) {
-    $v = trim((string)$v);
-    if ($v === '') return null;
-    if (validDate($v)) return $v;
-    $t = strtotime($v);
-    return ($t !== false && $t > 0) ? date('Y-m-d', $t) : null;
-}
 /** 'leader' for values like Leader / Head / Committee head, otherwise 'member' */
 function roleOf($v) {
     $s = strtolower(preg_replace('/[^a-z]/i', '', (string)$v));
@@ -206,7 +198,7 @@ function syncLeaders() {
 function ensureSchema($force = false) {
     global $pdo;
     $errs = [];
-    $flag = sys_get_temp_dir() . '/mq_schema_v7';
+    $flag = sys_get_temp_dir() . '/mq_schema_v6';
     if (!$force && is_file($flag)) return $errs;
     $hasTable = fn($t) => (bool)q('SELECT 1 FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?', [$t])->fetchColumn();
     $hasCol = fn($t, $c) => (bool)q('SELECT 1 FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?', [$t, $c])->fetchColumn();
@@ -254,7 +246,6 @@ function ensureSchema($force = false) {
         ['members', 'member_role', "VARCHAR(10) NOT NULL DEFAULT 'member'"],
         ['members', 'scholar_type', "VARCHAR(10) NOT NULL DEFAULT 'none'"],
         ['members', 'ministry', 'VARCHAR(100) NULL'],
-        ['members', 'joined_pym_since', 'DATE NULL'],
         ['attendance', 'time_in', 'TIME NULL'],
         ['attendance', 'reason', 'VARCHAR(255) NULL'],
         ['attendance', 'marked_by', 'BIGINT NULL'],
@@ -523,7 +514,6 @@ switch ($action) {
         $cid = $sc ?: (int)($in['committee_id'] ?? 0);
         $min = cut($in['ministry'] ?? '', 100);
         $sch = in_array($in['scholar_type'] ?? '', ['none', 'shs', 'college'], true) ? $in['scholar_type'] : 'none';
-        $joined = joinedOf($in['joined_pym_since'] ?? '');
         $role = ($in['member_role'] ?? '') === 'leader' ? 'leader' : 'member';
         $st = ($in['status'] ?? '') === 'inactive' ? 'inactive' : 'active';
         if ($name === '') out(false, 'Name is required.');
@@ -534,10 +524,10 @@ switch ($action) {
             $m = q('SELECT committee_id FROM members WHERE id = ?', [$id])->fetch();
             if (!$m) out(false, 'Member not found.');
             if ($sc && (int)$m['committee_id'] !== $sc) out(false, 'You can only edit members of your committee.');
-            q('UPDATE members SET full_name=?, committee_id=?, ministry=?, member_role=?, scholar_type=?, joined_pym_since=?, status=? WHERE id=?', [$name, $cid, $min, $role, $sch, $joined, $st, $id]);
+            q('UPDATE members SET full_name=?, committee_id=?, ministry=?, member_role=?, scholar_type=?, status=? WHERE id=?', [$name, $cid, $min, $role, $sch, $st, $id]);
             out(true, 'Member updated.');
         }
-        q('INSERT INTO members (full_name, committee_id, ministry, member_role, scholar_type, joined_pym_since, status) VALUES (?,?,?,?,?,?,?)', [$name, $cid, $min, $role, $sch, $joined, $st]);
+        q('INSERT INTO members (full_name, committee_id, ministry, member_role, scholar_type, status) VALUES (?,?,?,?,?,?)', [$name, $cid, $min, $role, $sch, $st]);
         out(true, 'Member added.');
     }
 
@@ -564,7 +554,7 @@ switch ($action) {
         $rows = is_array($in['rows'] ?? null) ? array_slice($in['rows'], 0, 1500) : [];
         $added = 0; $skipped = 0; $bad = [];
         $chk = $pdo->prepare('SELECT id FROM members WHERE LOWER(TRIM(full_name)) = ? AND committee_id = ?');
-        $ins = $pdo->prepare('INSERT INTO members (full_name, committee_id, ministry, member_role, scholar_type, joined_pym_since, status) VALUES (?,?,?,?,?,?,?)');
+        $ins = $pdo->prepare('INSERT INTO members (full_name, committee_id, ministry, member_role, scholar_type, status) VALUES (?,?,?,?,?,?)');
         foreach ($rows as $i => $r) {
             $name = cut($r['full_name'] ?? '', 100);
             if ($name === '') continue;
@@ -572,7 +562,7 @@ switch ($action) {
             if (!$cid) { $bad[] = $name . ' (committee "' . cut($r['committee'] ?? '', 30) . '")'; continue; }
             $chk->execute([strtolower($name), $cid]);
             if ($chk->fetch()) { $skipped++; continue; }
-            $ins->execute([$name, $cid, cut($r['ministry'] ?? '', 100), roleOf($r['role'] ?? ''), scholarOf($r['scholar'] ?? ''), joinedOf($r['joined'] ?? ''), 'active']);
+            $ins->execute([$name, $cid, cut($r['ministry'] ?? '', 100), roleOf($r['role'] ?? ''), scholarOf($r['scholar'] ?? ''), 'active']);
             $added++;
         }
         $msg = "$added added, $skipped already existed";
@@ -587,7 +577,7 @@ switch ($action) {
         $rows = is_array($in['rows'] ?? null) ? array_slice($in['rows'], 0, 500) : [];
         $added = 0; $skipped = 0; $seen = [];
         $chk = $pdo->prepare('SELECT id FROM members WHERE LOWER(TRIM(full_name)) = ? AND committee_id = ?');
-        $ins = $pdo->prepare('INSERT INTO members (full_name, committee_id, ministry, member_role, scholar_type, joined_pym_since, status) VALUES (?,?,?,?,?,?,?)');
+        $ins = $pdo->prepare('INSERT INTO members (full_name, committee_id, ministry, member_role, scholar_type, status) VALUES (?,?,?,?,?,?)');
         foreach ($rows as $r) {
             $name = cut($r['full_name'] ?? '', 100);
             if ($name === '') continue;
@@ -596,7 +586,7 @@ switch ($action) {
             $seen[$k] = true;
             $chk->execute([$k, $cid]);
             if ($chk->fetch()) { $skipped++; continue; }
-            $ins->execute([$name, $cid, cut($r['ministry'] ?? '', 100), roleOf($r['role'] ?? ''), scholarOf($r['scholar'] ?? ''), joinedOf($r['joined'] ?? ''), 'active']);
+            $ins->execute([$name, $cid, cut($r['ministry'] ?? '', 100), roleOf($r['role'] ?? ''), scholarOf($r['scholar'] ?? ''), 'active']);
             $added++;
         }
         if (!$added && !$skipped) out(false, 'Type at least one full name.');
@@ -758,7 +748,7 @@ switch ($action) {
         $mj = $sc ? " WHERE m.committee_id = $sc" : '';
         $ms = $sc ? " WHERE committee_id = $sc" : '';
         $a = q("SELECT COUNT(*) c, COALESCE(MAX(a.marked_at), '') t, COALESCE(SUM(a.status = 'present'), 0) p, COALESCE(SUM(a.status = 'excused'), 0) x FROM attendance a JOIN members m ON m.id = a.member_id$mj")->fetch();
-        $m = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(id, '-', full_name, '-', committee_id, '-', member_role, '-', status, '-', scholar_type, '-', COALESCE(ministry, ''), '-', COALESCE(joined_pym_since, '')))), 0) s FROM members$ms")->fetch();
+        $m = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(id, '-', full_name, '-', committee_id, '-', member_role, '-', status, '-', scholar_type, '-', COALESCE(ministry, '')))), 0) s FROM members$ms")->fetch();
         $e = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(id, '-', title, '-', event_date, '-', COALESCE(event_time, ''), '-', COALESCE(end_time, ''), '-', COALESCE(location, '')))), 0) s FROM events")->fetch();
         $ec = q("SELECT COUNT(*) c, COALESCE(SUM(CRC32(CONCAT(event_id, '-', committee_id, '-', COALESCE(location, '')))), 0) s FROM event_committees")->fetch();
         out(true, '', ['hash' => md5(json_encode([$a, $m, $e, $ec]))]);

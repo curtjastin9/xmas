@@ -16,7 +16,6 @@ const GROUP_COLOR = '#0F3D2E'; // calendar dot for whole-group schedules
 const todayStr = () => new Date().toLocaleDateString('en-CA', { timeZone: TZ });
 const nowHM = () => new Date().toLocaleTimeString('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hour12: false });
 const fmtDate = d => d ? new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) : '';
-const joinedFmt = d => new Date(d + 'T00:00:00').toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
 const fmtTime = t => {
   if (!t) return '';
   const [h, m] = String(t).split(':').map(Number);
@@ -698,7 +697,6 @@ function memberModal(m, done) {
       <label>Role<select name="member_role"><option value="member" ${m.member_role !== 'leader' ? 'selected' : ''}>Member</option><option value="leader" ${m.member_role === 'leader' ? 'selected' : ''}>Leader (always shown on top)</option></select></label>
       <label>Ministry<select name="ministry">${ministryOpts(m.ministry)}</select></label>
       <label>Scholar<select name="scholar_type">${Object.entries(SCHOLAR).map(([k, v]) => `<option value="${k}" ${(m.scholar_type || 'none') === k ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
-      <label>Joined PYM since <span class="muted">(leave empty if not yet joined)</span><input type="date" name="joined_pym_since" max="${todayStr()}" value="${esc(m.joined_pym_since || '')}"></label>
       <label>Status<select name="status"><option value="active" ${m.status !== 'inactive' ? 'selected' : ''}>Active</option><option value="inactive" ${m.status === 'inactive' ? 'selected' : ''}>Inactive (hidden from attendance)</option></select></label>
       <div class="actions"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn pri">Save</button></div>
     </form>`, (el, close) => {
@@ -774,43 +772,36 @@ function importModal(done) {
     });
 }
 
-/** Turn pasted/uploaded rows (straight from Excel) into [{n, m, s, j, r}]. Columns: Full name, Ministry, Scholar, Joined PYM since. Role is always member. */
+/** Turn pasted/uploaded rows (straight from Excel) into [{n, m, s, r}]. Columns: Full name, Ministry, Scholar. Role is always member. */
 function parseMemberRows(matrix) {
   matrix = matrix.filter(r => r.some(c => String(c ?? '').trim() !== ''));
   if (!matrix.length) return [];
   const NAMES = ['name', 'fullname', 'membername', 'names'];
-  let ni = 0, mi = 1, si = 2, ji = 3, start = 0;
+  let ni = 0, mi = 1, si = 2, start = 0;
   const h = matrix[0].map(norm);
   if (h.some(k => NAMES.includes(k))) {
-    start = 1; mi = -1; si = -1; ji = -1;
-    h.forEach((k, i) => { if (NAMES.includes(k)) ni = i; else if (k.startsWith('ministr')) mi = i; else if (k.startsWith('scholar')) si = i; else if (k.startsWith('joined') || k.includes('pymsince')) ji = i; });
+    start = 1; mi = -1; si = -1;
+    h.forEach((k, i) => { if (NAMES.includes(k)) ni = i; else if (k.startsWith('ministr')) mi = i; else if (k.startsWith('scholar')) si = i; });
   }
-  const jd = v => {
-    if (v instanceof Date && !isNaN(v)) return v.toLocaleDateString('en-CA');
-    const t = String(v ?? '').trim(); if (!t) return '';
-    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) return t;
-    if (/^\d{5}$/.test(t)) return new Date(Date.UTC(1899, 11, 30) + (+t) * 864e5).toISOString().slice(0, 10); // Excel serial date
-    const d = new Date(t); return isNaN(d) ? '' : d.toLocaleDateString('en-CA');
-  };
   const sk = v => { const s = norm(v); return (s.startsWith('shs') || s.includes('seniorhigh')) ? 'shs' : s.includes('college') ? 'college' : 'none'; };
   const mn = v => { const t = String(v ?? '').trim(); return MINISTRIES.find(x => norm(x) === norm(t)) || t; };
-  return matrix.slice(start).map(r => ({ n: String(r[ni] ?? '').trim(), m: mi >= 0 ? mn(r[mi]) : '', s: si >= 0 ? sk(r[si]) : 'none', j: ji >= 0 ? jd(r[ji]) : '', r: 'member' })).filter(r => r.n);
+  return matrix.slice(start).map(r => ({ n: String(r[ni] ?? '').trim(), m: mi >= 0 ? mn(r[mi]) : '', s: si >= 0 ? sk(r[si]) : 'none', r: 'member' })).filter(r => r.n);
 }
 
 function insertModal(done) {
-  const blank = () => ({ n: '', m: '', s: 'none', j: '', r: 'member' });
+  const blank = () => ({ n: '', m: '', s: 'none', r: 'member' });
   let rows = [blank(), blank(), blank()];
   modal(`<h3>Insert members</h3>
     <p class="sub">${isSec() ? 'Pick the committee, then add the members.' : 'They will be added to <b>' + esc(ME.committee_name || 'your committee') + '</b>.'} Role is set to <b>Member</b> and status to <b>Active</b> automatically.</p>
     ${isSec() ? `<label>Committee<select id="icom"><option value="">Choose…</option>${COMMITTEES.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join('')}</select></label>` : ''}
-    <div class="irow r3 ihead"><span>Full name</span><span>Ministry</span><span>Scholar</span><span>Joined PYM since</span><span></span></div>
+    <div class="irow r3 ihead"><span>Full name</span><span>Ministry</span><span>Scholar</span><span></span></div>
     <div id="irows"></div>
     <div class="bar" style="margin:10px 0 0">
       <button type="button" class="btn sm" id="iadd"><i class="fas fa-plus"></i> Add row</button>
       <button type="button" class="btn sm" id="ifile"><i class="fas fa-file-excel"></i> Upload Excel / CSV</button>
       <button type="button" class="btn sm ghost" id="itpl"><i class="fas fa-download"></i> Template</button>
       <input type="file" id="ifl" class="hidden" accept=".xlsx,.xls,.csv"></div>
-    <label>Or paste rows copied from Excel <span class="muted">(Full name, Ministry, Scholar, Joined PYM since)</span>
+    <label>Or paste rows copied from Excel <span class="muted">(Full name, Ministry, Scholar)</span>
       <textarea id="ipaste" style="min-height:70px" placeholder="Tap here and paste"></textarea></label>
     <div class="msg" id="ipv" style="color:var(--soft);min-height:20px"></div>
     <div class="actions"><button type="button" class="btn ghost" data-close>Cancel</button><button class="btn pri" id="isave"><i class="fas fa-floppy-disk"></i> <span id="ilabel">Save members</span></button></div>`,
@@ -821,7 +812,6 @@ function insertModal(done) {
           <input class="nm" data-f="n" maxlength="100" placeholder="Full name" value="${esc(r.n)}" aria-label="Full name">
           <select data-f="m" aria-label="Ministry">${ministryOpts(r.m)}</select>
           <select data-f="s" aria-label="Scholar">${Object.entries(SCHOLAR).map(([k, v]) => `<option value="${k}" ${r.s === k ? 'selected' : ''}>${v}</option>`).join('')}</select>
-          <input type="date" data-f="j" max="${todayStr()}" value="${esc(r.j)}" aria-label="Joined PYM since" title="Joined PYM since (leave empty if none)">
           <button type="button" class="btn sm no rm" data-rm="${i}" aria-label="Remove row">✕</button></div>`).join('');
         count();
         if (focusLast) { const n = $$('#irows .nm', el); n[n.length - 1].focus(); }
@@ -877,9 +867,9 @@ function insertModal(done) {
         } catch (x) { toast('Could not read that file.', true); }
         e.target.value = '';
       });
-      $('#itpl', el).onclick = () => exportRows('xlsx', 'members-template', ['Full name', 'Ministry', 'Scholar', 'Joined PYM since'], [['Juan Dela Cruz', 'PYM', 'College', '2023-06-15'], ['Maria Santos', 'MAS', 'SHS', '2024-01-20'], ['Pedro Reyes', 'COY', 'None', '']]);
+      $('#itpl', el).onclick = () => exportRows('xlsx', 'members-template', ['Full name', 'Ministry', 'Scholar'], [['Juan Dela Cruz', 'PYM', 'College'], ['Maria Santos', 'MAS', 'SHS'], ['Pedro Reyes', 'COY', 'None']]);
       $('#isave', el).onclick = async e => {
-        const list = rows.filter(r => r.n.trim()).map(r => ({ full_name: r.n.trim(), ministry: r.m.trim(), scholar: r.s, joined: r.j, role: 'member' }));
+        const list = rows.filter(r => r.n.trim()).map(r => ({ full_name: r.n.trim(), ministry: r.m.trim(), scholar: r.s, role: 'member' }));
         if (!list.length) { toast('Type at least one full name.', true); return; }
         const body = { rows: list };
         if (isSec()) { body.committee_id = +$('#icom', el).value; if (!body.committee_id) { toast('Choose a committee first.', true); return; } }
@@ -906,11 +896,10 @@ VIEWS.members = async () => {
     const list = leadersFirst(rows.filter(m => (!cf || +m.committee_id === +cf) && (!rf || m.member_role === rf) && (!sf || m.scholar_type === sf) && (!st || m.status === st) &&
       (!q || norm(m.full_name + m.ministry + m.committee_name + (isLead(m) ? 'leader' : '')).includes(norm(q)))));
     $('#mc').textContent = `${list.length} shown of ${rows.length}`;
-    $('#tb').innerHTML = list.length ? `<div class="tw tc"><table><thead><tr><th>Name</th>${isSec() ? '<th>Committee</th>' : ''}<th>Role</th><th>Ministry</th><th>Joined PYM since</th><th>Scholar</th><th>Status</th><th></th></tr></thead><tbody>
+    $('#tb').innerHTML = list.length ? `<div class="tw tc"><table><thead><tr><th>Name</th>${isSec() ? '<th>Committee</th>' : ''}<th>Role</th><th>Ministry</th><th>Scholar</th><th>Status</th><th></th></tr></thead><tbody>
       ${list.map(m => `<tr class="${isLead(m) ? 'isl' : ''}"><td data-label="Name"><b>${esc(m.full_name)}</b></td>${isSec() ? `<td data-label="Committee">${comTag(m.committee_name, m.committee_id)}</td>` : ''}
         <td data-label="Role">${isLead(m) ? roleBadge('leader') : '<span class="pill member">Member</span>'}</td>
         <td data-label="Ministry">${esc(m.ministry) || '<small>—</small>'}</td>
-        <td data-label="Joined PYM since">${m.joined_pym_since ? esc(joinedFmt(m.joined_pym_since)) : '<small>None</small>'}</td>
         <td data-label="Scholar">${m.scholar_type === 'none' ? '<small>—</small>' : esc(SCHOLAR[m.scholar_type])}</td><td data-label="Status"><span class="pill ${m.status}">${m.status}</span></td>
         <td class="act" style="white-space:nowrap;text-align:right"><button class="btn sm ghost" data-edit="${m.id}" aria-label="Edit ${esc(m.full_name)}">Edit</button>
         ${isSec() ? `<button class="btn sm no" data-del="${m.id}" aria-label="Delete ${esc(m.full_name)}">Delete</button>` : ''}</td></tr>`).join('')}</tbody></table></div>`
